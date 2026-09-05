@@ -38,7 +38,10 @@ object GameEvents : Listener {
 
     @EventHandler(ignoreCancelled = true)
     fun onPlayerSetSpawn(event: PlayerSetSpawnEvent) {
-        if (event.cause == PlayerSetSpawnEvent.Cause.BED || event.cause == PlayerSetSpawnEvent.Cause.RESPAWN_ANCHOR)
+        if (event.cause != PlayerSetSpawnEvent.Cause.BED && event.cause != PlayerSetSpawnEvent.Cause.RESPAWN_ANCHOR) return
+
+        // Only players who are actually in a game, so beds and anchors keep working everywhere else.
+        if (GameManager.isInGame(event.player))
             event.isCancelled = true
     }
 

@@ -18,15 +18,21 @@ fun <T> getIfClassExists(requiredClass: String, hasClass: () -> T, alternative: 
     return hasClass()
 }
 
+private fun gameRuleSafe(oldName: String, newName: String): Any = try {
+    // New game-rule system from 1.21.9, 1.21.10, or 1.21.11, not sure when exactly it got added:
+    Class.forName("org.bukkit.GameRules").getField(newName)
+} catch (_: Exception) {
+    Class.forName("org.bukkit.GameRule").getField(oldName)
+}.get(null)
+
 fun <T : Any> World.setGameRuleSafe(oldName: String, newName: String, value: T) {
-    val field = try {
-        // New game-rule system from 1.21.9, 1.21.10, or 1.21.11, not sure when exactly it got added:
-        Class.forName("org.bukkit.GameRules").getField(newName)
-    } catch (_: Exception) {
-        Class.forName("org.bukkit.GameRule").getField(oldName)
-    }
     @Suppress("UNCHECKED_CAST")
-    setGameRule(field.get(null) as GameRule<T>, value)
+    setGameRule(gameRuleSafe(oldName, newName) as GameRule<T>, value)
+}
+
+fun <T : Any> World.getGameRuleSafe(oldName: String, newName: String): T? {
+    @Suppress("UNCHECKED_CAST")
+    return getGameRuleValue(gameRuleSafe(oldName, newName) as GameRule<T>)
 }
 
 val cachedAttributes = mutableMapOf<String, Attribute>()

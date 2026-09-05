@@ -6,6 +6,7 @@ import com.marcpg.pillarperil.PillarPeril
 import com.marcpg.pillarperil.game.Game
 import com.marcpg.pillarperil.util.Configuration
 import com.marcpg.pillarperil.util.Ticking
+import com.marcpg.pillarperil.util.trackToFastStats
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.minimessage.MiniMessage
 import org.bukkit.Bukkit
@@ -46,11 +47,9 @@ object QueueManager : Ticking {
                 check()
         }
 
-        queue.forEach { it.sendActionBar(it.locale().component(
-            "queue.actionbar",
-            queue.size.toString(), Configuration.queueMinPlayers.toString(),
-            color = if (queue.size >= Configuration.queueMinPlayers) NamedTextColor.GREEN else NamedTextColor.RED
-        )) }
+        // Animate the gradient by shifting its phase, which MiniMessage expects to be within -1.0 and 1.0.
+        phase += 0.02
+        if (phase > 1.0) phase -= 2.0
 
         queue.forEach { it.sendActionBar(MiniMessage.miniMessage().deserialize("<gradient:${if (queue.size >= Configuration.queueMinPlayers) GREEN_COLORS else RED_COLORS}:$phase>${it.locale().string("queue.actionbar", queue.size.toString(), Configuration.queueMinPlayers.toString())}</gradient>")) }
     }
@@ -65,36 +64,28 @@ object QueueManager : Ticking {
 
     private fun startGame(players: List<Player>) {
         val id = Game.generateId()
-        val map = mutableMapOf(
-            "id" to id,
-            "mode" to Configuration.queueMode.gameInfo.namespace,
-            "players" to players.size,
-        )
 
-        Configuration.queuePreCommands.forEach { PillarPeril.sendCommand(it(map)) }
-
-        val worldName = Configuration.queueWorldName(map)
-        val world = Bukkit.getWorld(worldName)
-        if (world == null) {
+        val arena = Configuration.queuedArena()
+        if (arena == null) {
+            PillarPeril.LOG.error("The queue is set to arena '${Configuration.queueArena}', which is not configured.")
             players.forEach {
-                it.sendMessage(component("Configured world \"$worldName\" does not exist, which means the game cannot start.", NamedTextColor.RED))
+                it.sendMessage(component("The game could not be started: no such arena is configured.", NamedTextColor.RED))
                 it.sendMessage(component("Please notify an admin of the server.", NamedTextColor.RED))
             }
             return
         }
 
-        val location = Configuration.queueLocation(world)
+        // Resolved lazily, so the configured pre-commands still get their chance to create the world.
+        GameStarter.start(id, Configuration.queueMode, players, resolveCenter = { arena.center() }) { result ->
+            result.onFailure { error ->
+                PillarPeril.LOG.error("Could not start queued game", error)
+                error.trackToFastStats()
 
-        map += mapOf(
-            "world" to location.world.name,
-            "x" to location.x,
-            "y" to location.y,
-            "z" to location.z,
-        )
-        Configuration.queuePostCommands.forEach { PillarPeril.sendCommand(it(map)) }
-
-        // Actually start the game after doing like 20 other things:
-        // TODO: Supply list of modifiers here:
-        Configuration.queueMode.constructGame(id, location, players, listOf()).init()
+                players.forEach {
+                    it.sendMessage(component("The game could not be started: ${error.message}", NamedTextColor.RED))
+                    it.sendMessage(component("Please notify an admin of the server.", NamedTextColor.RED))
+                }
+            }
+        }
     }
 }

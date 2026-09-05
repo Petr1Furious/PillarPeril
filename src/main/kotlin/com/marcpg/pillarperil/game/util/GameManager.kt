@@ -42,6 +42,9 @@ object GameManager {
     fun isInGame(player: Player, onlyAlive: Boolean = true): Boolean =
         games.any { it.value.player(player, onlyAlive) != null }
 
+    fun gameOf(player: Player, onlyAlive: Boolean = true): Game? =
+        games.values.firstOrNull { it.player(player, onlyAlive) != null }
+
     fun isPartOfGame(entity: Entity): Boolean {
         return if (entity is Player) {
             isInGame(entity)

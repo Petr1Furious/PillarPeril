@@ -22,6 +22,8 @@ import net.kyori.adventure.title.Title
 import org.bukkit.*
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemType
+import org.bukkit.util.Vector
+import java.time.Duration
 import kotlin.math.atan2
 
 abstract class Game(
@@ -51,6 +53,9 @@ abstract class Game(
         }
 
         fun generateId() = Randomizer.generateRandomString(Constants.GAME_ID_LENGTH, Constants.GAME_ID_CHARSET)
+
+        // Kept short, so that every countdown title fully replaces the previous one.
+        private val countdownTimes: Title.Times = Title.Times.times(Duration.ZERO, Duration.ofMillis(900), Duration.ofMillis(200))
     }
 
     // ================ CONSTRUCTION DATA ================
@@ -61,11 +66,15 @@ abstract class Game(
     val world: World = center.world
     val startingTick: Int = Bukkit.getCurrentTick()
 
-    val initialPlayers: List<PillarPlayer> = mutableListOf() // Only modified at startup, hence hidden mutability.
+    // Only modified when players join, leave, or reconnect, hence the hidden mutability.
+    val initialPlayers: List<PillarPlayer> = mutableListOf()
     val players = mutableListOf<PillarPlayer>()
 
     // Initial target consisting of all `initialPlayers`, just used for caching.
-    private val initialTarget: ForwardingMinecraftReceiver by lazy { initialPlayers.toList().receiver() }
+    // Dropped whenever the player list changes, as reconnects replace players with a freshly bound instance.
+    private var cachedInitialTarget: ForwardingMinecraftReceiver? = null
+    private val initialTarget: ForwardingMinecraftReceiver
+        get() = cachedInitialTarget ?: initialPlayers.toList().receiver().also { cachedInitialTarget = it }
 
     var radius: Double = 0.0
 
@@ -74,8 +83,32 @@ abstract class Game(
 
     // ==================== GAME STATE ====================
 
+    /**
+     * An optional time limit which overrides the game mode's configured one.
+     * Has to be set before calling [init] to have any effect.
+     */
+    var timeLimitOverride: Time? = null
+
+    /**
+     * A world created purely for this game, which is deleted once the game is over.
+     *
+     * When this is set, the arena needs no rollback at all — the entire world goes away, so every block
+     * and entity change goes with it, whatever caused it.
+     */
+    var disposableWorld: World? = null
+
     val timeLeft = Time()
     val itemCountdown = Time(0, allowNegatives = true)
+
+    /**
+     * The remaining seconds of the grace period at the very beginning of the game.
+     * While this is above zero, players are frozen on their pillars and cannot be damaged.
+     */
+    val startCountdown = Time()
+
+    /** Whether the initial grace period is over and the game is actually running. */
+    var started: Boolean = false
+        private set
 
     val itemCountdownPercentage: Float
         get() = (itemCountdown.get().toFloat() / (info.itemCountdown().toFloat() - 1)).coerceIn(0.0f, 1.0f)
@@ -84,6 +117,9 @@ abstract class Game(
     private val itemEvents = mutableListOf<() -> Unit>()
 
     var ending = false
+
+    /** The world's `doImmediateRespawn` from before the game changed it, restored once the game is over. */
+    private var previousImmediateRespawn: Boolean? = null
 
     // ================= DISPLAY METHODS =================
 
@@ -115,6 +151,8 @@ abstract class Game(
     // =============== OVERRIDABLE METHODS ===============
 
     open fun init() {
+        // Remembered so the world can be handed back the way it was found, as a game is rarely the only thing in it.
+        previousImmediateRespawn = world.getGameRuleSafe("DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN")
         world.setGameRuleSafe("DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN", true)
 
         bukkitPlayers
@@ -156,9 +194,17 @@ abstract class Game(
         buildings = Buildings(this, info.horGen().constructGen(this), info.vertGen().constructGen(this))
         val centeredCenter = center.toCenterLocation()
         buildings.generate().forEachIndexed { i, l ->
-            val location = l.clone().add(0.0, 1.0, 0.0).toCenterLocation()
+            // Only X and Z get centered: toCenterLocation() would raise Y by another half block,
+            // dropping the player onto their pillar from mid-air instead of standing them on it.
+            val location = l.clone().toCenterLocation().apply { y = l.y + 1.0 }
             location.yaw = Math.toDegrees(atan2(-(centeredCenter.x - location.x), centeredCenter.z - location.z)).toFloat()
+
+            players[i].pillar = location
             players[i].teleport(location)
+
+            // Players who were running or jumping when the game started would otherwise keep their momentum.
+            players[i].player.velocity = Vector()
+            players[i].player.fallDistance = 0.0f
         }
 
         modifiers.forEach { it.customBuild() }
@@ -168,8 +214,13 @@ abstract class Game(
             bossBar?.start()
         }
 
-        timeLeft.set(info.timeLimit())
+        timeLeft.set(timeLimitOverride ?: info.timeLimit())
         itemCountdown.set(info.itemCountdown())
+
+        startCountdown.set(Configuration.startCountdown.coerceAtLeast(0).toLong())
+        started = startCountdown.get() <= 0L
+        if (!started)
+            initialPlayers.forEach { it.player.isInvulnerable = true }
 
         GameManager.add(this)
         info("Initialized the game.")
@@ -194,6 +245,29 @@ abstract class Game(
     }
 
     fun target(onlyAlive: Boolean = true): MinecraftReceiver = if (onlyAlive) players.receiver() else initialTarget
+
+    /** Sends a translated message to everyone who is or was part of this game. */
+    private fun announce(key: String, vararg variables: String?, color: TextColor = NamedTextColor.YELLOW) {
+        for (p in initialPlayers) {
+            p.sendMessage(p.locale().component(key, *variables, color = color))
+        }
+    }
+
+    /**
+     * Drops the cached receivers and rebuilds the boss bar.
+     *
+     * Both hold onto the players they were created with, so they have to be redone whenever the
+     * player list changes — otherwise joined or reconnected players would never see the boss bar.
+     */
+    private fun refreshTargets() {
+        cachedInitialTarget = null
+
+        if (bossBar != null) {
+            bossBar?.stop()
+            bossBar = bossBarCreator()
+            bossBar?.start()
+        }
+    }
 
     fun player(bukkitPlayer: Player, onlyAlive: Boolean = true): PillarPlayer? {
         for (player in (if (onlyAlive) players else initialPlayers)) {
@@ -230,20 +304,127 @@ abstract class Game(
                 }
             }
 
-            if (Configuration.respawnAtConfig) {
-                player.player.gameMode = Configuration.spawnGameMode
-                player.player.teleport(Configuration.getSpawnLocation(player.player.world))
-            } else {
-                player.player.gameMode = GameMode.SPECTATOR
-                player.player.teleport(center)
-            }
+            // Ending the game already sent everyone to the spawn and may have thrown the arena's world
+            // away, so placing this player now would strand them in a world that no longer exists.
+            if (!ending)
+                placeEliminated(player)
 
             modifiers.forEach { it.onPostPlayerDeath(player) }
         }
     }
 
+    /** Moves an eliminated player to wherever eliminated players belong. Does nothing while they are offline. */
+    private fun placeEliminated(player: PillarPlayer) {
+        if (!player.player.isOnline) return
+
+        if (Configuration.respawnAtConfig) {
+            player.player.gameMode = Configuration.spawnGameMode
+            player.player.teleport(Configuration.getSpawnLocation(player.player.world))
+        } else {
+            player.player.gameMode = GameMode.SPECTATOR
+            player.player.teleport(center)
+        }
+    }
+
+    // ================ MEMBERSHIP METHODS ================
+
+    /**
+     * Marks a player as disconnected instead of eliminating them right away.
+     * They keep their spot until [Configuration.reconnectGrace] runs out.
+     */
+    fun disconnect(player: PillarPlayer) {
+        if (ending || player.disconnected || player !in players) return
+
+        player.disconnectedAt = Bukkit.getCurrentTick()
+        player.stopDisplays()
+
+        val grace = Time(Configuration.reconnectGrace.toLong(), Time.Unit.SECONDS)
+        announce("info.reconnect.disconnected", player.name(), grace.oneUnitFormatted)
+        info("$player disconnected and has ${grace.oneUnitFormatted} to reconnect.")
+    }
+
+    /**
+     * Binds this game back onto a player who just came back online.
+     *
+     * A reconnecting player is a completely new Bukkit player object, so their [PillarPlayer] is
+     * replaced by one bound to the new object, carrying over everything the game tracked about them.
+     *
+     * @return `true` if the player was part of this game and got rebound.
+     */
+    fun reconnect(bukkitPlayer: Player): Boolean {
+        if (ending) return false
+
+        val old = player(bukkitPlayer, onlyAlive = false) ?: return false
+        val stillAlive = players.indexOf(old)
+
+        old.stopDisplays()
+
+        val fresh = PillarPlayer(bukkitPlayer, this, old.initialSnapshot)
+        fresh.kills = old.kills
+        fresh.deathTime = old.deathTime
+        fresh.pillar = old.pillar
+
+        (initialPlayers as MutableList).replaceAll { if (it === old) fresh else it }
+        if (stillAlive != -1)
+            players[stillAlive] = fresh
+
+        refreshTargets()
+
+        if (stillAlive == -1) {
+            // They ran out of time to reconnect while being away, so they are only a spectator now.
+            placeEliminated(fresh)
+            info("$fresh reconnected, but was already eliminated.")
+            return true
+        }
+
+        if (!started)
+            bukkitPlayer.isInvulnerable = true
+
+        // Logging back in below the death height would kill them instantly, so put them back onto their pillar.
+        val pillar = fresh.pillar
+        if (pillar != null && bukkitPlayer.location.y < Configuration.deathHeight) {
+            fresh.teleport(pillar)
+            bukkitPlayer.velocity = Vector()
+            bukkitPlayer.fallDistance = 0.0f
+        }
+
+        fresh.disconnectedAt = null
+
+        announce("info.reconnect.reconnected", fresh.name())
+        info("$fresh reconnected.")
+        return true
+    }
+
+    /** Eliminates everyone whose reconnect grace period has run out. */
+    private fun tickDisconnects() {
+        val grace = Configuration.reconnectGrace
+        if (grace <= 0) return
+
+        val now = Bukkit.getCurrentTick()
+        for (player in players.toList()) {
+            val since = player.disconnectedAt ?: continue
+
+            if ((now - since) / 20 >= grace) {
+                announce("info.reconnect.timeout", player.name())
+                info("$player did not reconnect in time.")
+                eliminate(player)
+            }
+        }
+    }
+
     override fun tick(tick: Ticking.Tick) {
         if (ending || players.isEmpty()) return
+
+        if (tick.isSecond(startingTick)) {
+            tickDisconnects()
+            if (ending || players.isEmpty()) return
+        }
+
+        if (!started) {
+            if (tick.isSecond(startingTick))
+                tickStartCountdown()
+            return
+        }
 
         if (tick.isSecond(startingTick)) {
             if (itemCountdown.get() <= 0) {
@@ -267,6 +448,74 @@ abstract class Game(
         tickEvents.filter { tick.isInInterval(startingTick, it.value) }.forEach { it.key() }
 
         modifiers.forEach { it.tick(tick) }
+    }
+
+    private fun tickStartCountdown() {
+        val secondsLeft = startCountdown.get()
+
+        // The last number needs its own second on screen, so releasing waits for the tick after it.
+        if (secondsLeft <= 0L) {
+            release()
+            return
+        }
+
+        for (p in initialPlayers) {
+            p.showTitle(Title.title(
+                component(secondsLeft.toString(), if (secondsLeft <= 3) NamedTextColor.RED else NamedTextColor.YELLOW).decorate(TextDecoration.BOLD),
+                p.locale().component("info.start.countdown.subtitle", color = NamedTextColor.GRAY),
+                countdownTimes,
+            ))
+        }
+        players.playSoundSafe(Sound.BLOCK_NOTE_BLOCK_HAT, 0.5f, 1.0f)
+
+        startCountdown.dec()
+    }
+
+    /** Ends the grace period, unfreezing all players and letting the actual game begin. */
+    private fun release() {
+        started = true
+
+        for (p in initialPlayers) {
+            p.player.isInvulnerable = false
+            p.player.velocity = Vector()
+            p.player.fallDistance = 0.0f
+
+            p.showTitle(Title.title(
+                p.locale().component("info.start.go.title", color = NamedTextColor.GREEN).decorate(TextDecoration.BOLD),
+                p.locale().component("info.start.go.subtitle", color = NamedTextColor.GRAY),
+                countdownTimes,
+            ))
+        }
+        players.playSoundSafe(Sound.ENTITY_PLAYER_LEVELUP, 0.75f, 1.2f)
+
+        info("The grace period is over, the game is now running.")
+    }
+
+    // ================ TIME-LIMIT METHODS ================
+
+    /** Extends the remaining time of this game and notifies all players about it. */
+    fun addTime(time: Time) {
+        timeLeft.increment(time.get())
+        announceTimeChange("info.time.extended", time)
+    }
+
+    /** Shortens the remaining time of this game and notifies all players about it. */
+    fun removeTime(time: Time) {
+        timeLeft.decrement(time.get()) // Clamped at zero, which ends the game on the next tick.
+        announceTimeChange("info.time.reduced", time)
+    }
+
+    /** Sets the remaining time of this game and notifies all players about it. */
+    fun setTime(time: Time) {
+        timeLeft.set(time)
+        announceTimeChange("info.time.set", time)
+    }
+
+    private fun announceTimeChange(key: String, time: Time) {
+        announce(key, time.oneUnitFormatted, timeLeft.preciselyFormatted)
+        players.playSoundSafe(Sound.BLOCK_NOTE_BLOCK_BELL, 0.5f, 1.5f)
+
+        info("Changed the time limit ($key by ${time.oneUnitFormatted}), leaving ${timeLeft.preciselyFormatted}.")
     }
 
     fun end(cause: EndingCause, winners: List<PillarPlayer> = listOf()) {
@@ -327,7 +576,18 @@ abstract class Game(
     private fun cleanup() {
         GameManager.remove(this)
         initialPlayers.forEach { it.clear(true) }
-        buildings.reset()
         bossBar?.stop()
+
+        // Has to happen while the world is still loaded, so before a temporary one gets thrown away.
+        previousImmediateRespawn?.let { world.setGameRuleSafe("DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN", it) }
+
+        val disposable = disposableWorld
+        if (disposable != null) {
+            GameWorlds.dispose(disposable)
+            info("Deleted this game's temporary world '${disposable.name}'.")
+            return
+        }
+
+        buildings.reset()
     }
 }

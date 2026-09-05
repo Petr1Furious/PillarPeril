@@ -10,9 +10,12 @@ import com.marcpg.pillarperil.event.PlayerEvents
 import com.marcpg.pillarperil.game.Game
 import com.marcpg.pillarperil.game.util.GameManager
 import com.marcpg.pillarperil.util.Configuration
+import com.marcpg.pillarperil.util.GameWorlds
+import com.marcpg.pillarperil.util.VoidChunkGenerator
 import com.marcpg.pillarperil.util.Metrics
 import io.papermc.paper.ServerBuildInfo
 import org.bukkit.Bukkit
+import org.bukkit.generator.ChunkGenerator
 import java.net.URI
 
 class PillarPeril : KotlinPlugin(Companion) {
@@ -38,25 +41,39 @@ class PillarPeril : KotlinPlugin(Companion) {
 
         Registry.load()
         Configuration.init()
+        GameWorlds.cleanupLeftovers()
         Metrics.start()
 
         addListeners(GameEvents, PlayerEvents)
         addCommands(
-            ServerUtils.Cmd(Commands.game, "Utilities for managing the Pillar Peril games or starting new ones.", "pillar-peril", "match", "round"),
+            ServerUtils.Cmd(Commands.game, "Utilities for managing the Pillar Peril games or starting new ones.", "match", "round"),
             ServerUtils.Cmd(Commands.queue, "Join, leave, and manage the Pillar Peril game queue if enabled."),
             ServerUtils.Cmd(Commands.ppConfig, "Manage the PillarPeril configuration.", "pillar-peril-config", "pp-settings"),
         )
     }
 
+    /**
+     * Lets world managers create empty worlds through this plugin, e.g. `/mv create arena normal -g PillarPeril`.
+     *
+     * Handy for building the arena world that games get copied from, as an empty world keeps that copy small.
+     */
+    override fun getDefaultWorldGenerator(worldName: String, id: String?): ChunkGenerator = VoidChunkGenerator
+
     private fun checkUpdates() {
         val currentVersion = MinecraftUpdateChecker.Version(VERSION, "Pillar Peril $VERSION", "release", "ERROR")
-        val result = MinecraftUpdateChecker.checkForUpdates(
-            source = MinecraftUpdateChecker.Source.MODRINTH,
-            projectId = "pillarperil",
-            loaders = listOf("paper"),
-            gameVersions = listOf(ServerBuildInfo.buildInfo().minecraftVersionId()),
-            currentVersion = currentVersion
-        )
+        // An update check is never important enough to stop the plugin from starting up.
+        val result = runCatching {
+            MinecraftUpdateChecker.checkForUpdates(
+                source = MinecraftUpdateChecker.Source.MODRINTH,
+                projectId = "pillarperil",
+                loaders = listOf("paper"),
+                gameVersions = listOf(ServerBuildInfo.buildInfo().minecraftVersionId()),
+                currentVersion = currentVersion
+            )
+        }.getOrElse {
+            LOG.warn("Could not check for updates: ${it.message}")
+            return
+        }
 
         when (result.type) {
             MinecraftUpdateChecker.Result.Type.UP_TO_DATE -> {

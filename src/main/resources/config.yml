@@ -12,6 +12,22 @@
 # ############################################################################### #
 
 
+# Start Countdown #
+# The countdown in seconds that players get after being teleported onto their pillars, before the game actually starts.
+# During this countdown, players cannot move and cannot take any damage, which gives them time to get ready.
+# Set to 0 to disable the countdown and start immediately.
+# Default: 3
+start-countdown: 3
+
+
+# Reconnect Grace #
+# How many seconds a player who disconnects mid-game gets to come back before being eliminated.
+# While disconnected they keep their spot, their pillar, and everything they built.
+# Set to 0 to eliminate players the moment they leave.
+# Default: 60
+reconnect-grace: 60
+
+
 # Platform Height #
 # The y-coordinate that the bedrock platforms will raise to.
 # Default: 200
@@ -43,8 +59,34 @@ platform-distance-factor: 10.0
 # Default: false
 enable-draws: false
 
+# An ordered list of commands to execute before any world or location is accessed.
+# This runs for every game, no matter whether it was started via '/game start' or by the queue.
+# This should only really be used to create a world for the game when using another plugin like MultiVerse.
+#   Available Placeholders:
+#     | -> '{id}'       : started game's ID
+#     | -> '{mode}'     : started game's game-mode
+#     | -> '{players}'  : amount of players in the started game
+start-pre-commands:
+  - /say Initializing game with {players} players... # <- example, you can freely remove this and leave the list empty.
+
+
+# An ordered list of commands to execute after the world and location of the game were accessed.
+# This runs for every game, no matter whether it was started via '/game start' or by the queue.
+# Things like creating a world for the game cannot happen here anymore.
+# Note that '{world}' is the game's actual world, so the temporary one when `disposable-worlds` is enabled.
+#   Available Placeholders:
+#     | -> '{id}'       : started game's ID
+#     | -> '{mode}'     : started game's game-mode
+#     | -> '{players}'  : amount of players in the started game
+#     | -> '{world}'    : name of the game's world
+#     | -> '{x}'        : the game's center location's x-component
+#     | -> '{y}'        : the game's center location's y-component
+#     | -> '{z}'        : the game's center location's z-component
+start-post-commands:
+  - /say Starting game at {x}/{y}/{z}... # <- example, you can freely remove this and leave the list empty.
+
+
 # An ordered list of commands to execute after a game ended.
-# This, unlike `queue.pre-commands` and `queue.post-commands`, will execute even if the queue is disabled.
 #   Available Placeholders:
 #     | -> '{id}'       : started game's ID
 #     | -> '{mode}'     : started game's game-mode
@@ -111,41 +153,9 @@ queue:
   # See below ('modes' section) for list of available game modes.
   mode: original
 
-  # The world to start the game in. Example value could be `game-{id}`.
-  #   Available Placeholders:
-  #     | -> '{id}'       : started game's ID
-  #     | -> '{mode}'     : started game's game-mode
-  #     | -> '{players}'  : amount of players in the started game
-  world: world
-
-  # The location to start the game at.
-  # If the y-component is set to -64.0, the game will start at the world spawn.
-  location:
-    x: 0.0
-    y: -64.0
-    z: 0.0
-
-  # An ordered list of commands to execute before any world or location is accessed.
-  # This should only really be used to create a world for the game when using another plugin like MultiVerse.
-  #   Available Placeholders:
-  #     | -> '{id}'       : started game's ID
-  #     | -> '{mode}'     : started game's game-mode
-  #     | -> '{players}'  : amount of players in the started game
-  pre-commands:
-    - /say Initializing game with {players} players... # <- example, you can freely remove this and leave the list empty.
-
-  # An ordered list of commands to execute after the world and location of the game were accessed.
-  # Things like creating a world for the game cannot happen here anymore.
-  #   Available Placeholders:
-  #     | -> '{id}'       : started game's ID
-  #     | -> '{mode}'     : started game's game-mode
-  #     | -> '{players}'  : amount of players in the started game
-  #     | -> '{world}'    : name of the game's world
-  #     | -> '{x}'        : the game's center location's x-component
-  #     | -> '{y}'        : the game's center location's y-component
-  #     | -> '{z}'        : the game's center location's z-component
-  post-commands:
-    - /say Starting game at {x}/{y}/{z}... # <- example, you can freely remove this and leave the list empty.
+  # The arena queued games are started in, as named in the `arenas` section above.
+  # Set to 'random' to pick a different arena for every game.
+  arena: random
 
 
 # Sound Effects #
@@ -283,6 +293,56 @@ modes:
       vertical: pillar
 
 
+# Arenas #
+# The places games can be started in, so that starting one only needs a name.
+# '/pillar-peril start' picks a random arena unless you name one.
+# The Y coordinate is ignored, as pillars are always built at `platform-height`.
+arenas:
+
+  # The arena's id, as used in '/pillar-peril start <mode> <arena>'.
+  main:
+    world: world
+    location:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+
+
+# Disposable Worlds #
+# Runs every game in a temporary world of its own, which is deleted once the game is over.
+# This is the most reliable way to clean up an arena: instead of undoing block and entity changes one by one,
+# the entire world is thrown away, so nothing can ever be left behind — no matter what caused the change.
+disposable-worlds:
+
+  # Whether games run in a temporary world instead of the world they were started in.
+  # With this disabled, arenas are rolled back block by block, which can miss changes
+  # caused by things like flowing water, explosions, or falling blocks.
+  # Default: true
+  enabled: true
+
+  # How the temporary world is created.
+  #   Available Modes:
+  #     | -> void  : a brand-new, completely empty world. Instant and takes practically no space.
+  #     | -> copy  : a full copy of the world the game is started in, so any scenery you built - a floor
+  #                  below the pillars, a skybox, a lobby - is there in every game and comes back untouched
+  #                  afterwards. The world being copied acts as a template and is never played in itself.
+  #                  Build a small world just for this: copying a normal survival world is far too slow,
+  #                  which is what `max-copy-size` below guards against.
+  mode: void
+
+  # The name of the temporary world.
+  #   Available Placeholders:
+  #     | -> '{id}'  : started game's ID
+  name: pp-{id}
+
+  # Only for the 'copy' mode: refuse to copy worlds larger than this, in MiB.
+  # Copying a large survival world per game would take minutes and fill up the disk, so games are
+  # refused rather than started in the template world, which would damage it.
+  # Set to 0 to allow any size.
+  # Default: 512
+  max-copy-size: 512
+
+
 # Disable FastStats Integration #
 # FastStats sends completely anonymous data about the server's Minecraft version, used game modes, etc.
 # to improve the plugin based on real usage data.
@@ -292,4 +352,4 @@ disable-faststats: false
 
 # The Configuration Version #
 # DO NOT MODIFY THIS, OR THE CONFIGURATION WILL LIKELY BREAK OR BE RESET!
-version: 6
+version: 9
