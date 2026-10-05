@@ -75,8 +75,7 @@ object QueueManager : Ticking {
             return
         }
 
-        // Resolved lazily, so the configured pre-commands still get their chance to create the world.
-        GameStarter.start(id, Configuration.queueMode, players, resolveCenter = { arena.center() }) { result ->
+        GameStarter.start(id, Configuration.queueMode, players, arena) { result ->
             result.onFailure { error ->
                 PillarPeril.LOG.error("Could not start queued game", error)
                 error.trackToFastStats()

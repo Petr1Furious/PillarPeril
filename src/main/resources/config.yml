@@ -113,7 +113,9 @@ respawn-at-config: false
 player-spawn:
 
   # The game mode to set players to when spawning here.
-  game-mode: adventure
+  # Set to 'previous' to leave the game mode alone, so players come out of a game in the same
+  # mode they went in. Only name a game mode here if this spawn is a lobby everybody belongs in.
+  game-mode: previous
 
   # The world to spawn in. The default world is called "world".
   world: world
@@ -306,6 +308,22 @@ arenas:
       x: 0.0
       y: 0.0
       z: 0.0
+
+    # Optional. The time of day games in this arena are played at.
+    # Either a tick of the day (0-24000) or one of the names '/time set' knows:
+    # day (1000), noon (6000), sunset (12000), night (13000), midnight (18000), sunrise (23000).
+    # Leave this out to play at whatever time the world is at.
+    # Note that time keeps passing during the game unless the daylight cycle is turned off below.
+    time: noon
+
+    # Optional. Game rules to apply for as long as a game in this arena runs.
+    # Every rule left out here simply keeps the value it has in the world, and everything set here
+    # is put back the way it was once the game ends.
+    # Both the current names and the ones from before 1.21.9 are understood.
+    gamerules:
+      doDaylightCycle: false # Keeps the sun where `time` above put it.
+      doWeatherCycle: false
+      mobGriefing: false
 
 
 # Disposable Worlds #

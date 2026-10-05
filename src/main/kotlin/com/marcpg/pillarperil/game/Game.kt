@@ -97,6 +97,12 @@ abstract class Game(
      */
     var disposableWorld: World? = null
 
+    /**
+     * The arena this game was started in, which decides things like the time of day and the game rules.
+     * Has to be set before calling [init] to have any effect.
+     */
+    var arena: Arena? = null
+
     val timeLeft = Time()
     val itemCountdown = Time(0, allowNegatives = true)
 
@@ -118,8 +124,11 @@ abstract class Game(
 
     var ending = false
 
-    /** The world's `doImmediateRespawn` from before the game changed it, restored once the game is over. */
-    private var previousImmediateRespawn: Boolean? = null
+    /** Every game rule this game changed, with the value the world had before it did. */
+    private val previousGameRules = mutableMapOf<GameRule<*>, Any?>()
+
+    /** How far this game moved its world's clock forward, undone once the game is over. */
+    private var timeShift: Long = 0L
 
     // ================= DISPLAY METHODS =================
 
@@ -151,9 +160,18 @@ abstract class Game(
     // =============== OVERRIDABLE METHODS ===============
 
     open fun init() {
-        // Remembered so the world can be handed back the way it was found, as a game is rarely the only thing in it.
-        previousImmediateRespawn = world.getGameRuleSafe("DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN")
-        world.setGameRuleSafe("DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN", true)
+        // Games are rarely the only thing in their world, so everything changed here is remembered
+        // and handed back by `restoreWorld` once the game is over.
+        applyGameRule(gameRuleSafe("DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN"), true)
+        applyArenaSettings()
+
+        // Somebody who died in the moments before the game started is still on the death screen, where
+        // they cannot be teleported onto a pillar and where a snapshot would record the zero health
+        // that gets handed back when the game ends. Both leave them stuck until they reconnect.
+        bukkitPlayers.forEach {
+            if (it.awaitingRespawn && !it.reviveIfDead())
+                warn("${it.name} is still dead and may not be placed onto their pillar correctly.")
+        }
 
         bukkitPlayers
             .map { PillarPlayer(it, this) }
@@ -317,8 +335,11 @@ abstract class Game(
     private fun placeEliminated(player: PillarPlayer) {
         if (!player.player.isOnline) return
 
+        // A teleport is silently dropped while they are on the death screen.
+        player.player.reviveIfDead()
+
         if (Configuration.respawnAtConfig) {
-            player.player.gameMode = Configuration.spawnGameMode
+            player.player.gameMode = Configuration.spawnGameMode.value ?: player.initialSnapshot.gameMode
             player.player.teleport(Configuration.getSpawnLocation(player.player.world))
         } else {
             player.player.gameMode = GameMode.SPECTATOR
@@ -573,18 +594,85 @@ abstract class Game(
         cleanup()
     }
 
+    // ================ WORLD-STATE METHODS ===============
+
+    /**
+     * Changes a game rule for as long as this game runs, remembering the value the world had before.
+     *
+     * Games are not necessarily alone in their world — with disposable worlds turned off they run in a
+     * world people live in — so everything set here is handed back by [restoreWorld] afterwards.
+     *
+     * @return `false` if the value does not fit the rule, in which case nothing was changed.
+     */
+    private fun applyGameRule(rule: GameRule<*>, value: Any): Boolean {
+        if (gameRuleValueOf(rule, value) == null) {
+            warn("Could not set the game rule '${rule.name}' to '$value'.")
+            return false
+        }
+
+        if (rule !in previousGameRules)
+            previousGameRules[rule] = world.gameRuleValue(rule)
+
+        world.setGameRuleValue(rule, value)
+        return true
+    }
+
+    /**
+     * Applies the arena's time of day and game rules, both of which are optional.
+     *
+     * Whatever the arena does not mention is deliberately left alone, so an arena only has to configure
+     * what should actually differ from the world it lives in.
+     */
+    private fun applyArenaSettings() {
+        val arena = arena ?: return
+        val applied = mutableListOf<String>()
+
+        for ((name, value) in arena.gameRules) {
+            val rule = resolveGameRule(name)
+            if (rule == null) {
+                warn("Arena '${arena.name}' configures an unknown game rule '$name'.")
+                continue
+            }
+
+            if (applyGameRule(rule, value))
+                applied += "$name=$value"
+        }
+
+        arena.time?.let {
+            val before = world.fullTime
+            world.time = it
+
+            // Only the jump made right here is undone later, so time the world spends during the game still counts.
+            timeShift = world.fullTime - before
+            applied += "time=$it"
+        }
+
+        if (applied.isNotEmpty())
+            info("Applied the settings of arena '${arena.name}' to '${world.name}': ${applied.joinToString()}.")
+    }
+
+    /** Puts everything this game changed about its world back the way it was found. */
+    private fun restoreWorld() {
+        previousGameRules.forEach { (rule, value) -> value?.let { world.setGameRuleValue(rule, it) } }
+        previousGameRules.clear()
+
+        if (timeShift != 0L) {
+            world.fullTime -= timeShift
+            timeShift = 0L
+        }
+    }
+
     private fun cleanup() {
         GameManager.remove(this)
         initialPlayers.forEach { it.clear(true) }
         bossBar?.stop()
 
         // Has to happen while the world is still loaded, so before a temporary one gets thrown away.
-        previousImmediateRespawn?.let { world.setGameRuleSafe("DO_IMMEDIATE_RESPAWN", "IMMEDIATE_RESPAWN", it) }
+        restoreWorld()
 
         val disposable = disposableWorld
         if (disposable != null) {
-            GameWorlds.dispose(disposable)
-            info("Deleted this game's temporary world '${disposable.name}'.")
+            GameWorlds.dispose(disposable) // Reports the outcome itself, as it may not be immediate.
             return
         }
 

@@ -3,6 +3,8 @@ package com.marcpg.pillarperil.util
 import com.marcpg.libpg.config.*
 import com.marcpg.libpg.storing.Cord
 import com.marcpg.libpg.util.BasicOptional
+import com.marcpg.libpg.util.basicOptional
+import com.marcpg.libpg.util.enumValueNoCase
 import com.marcpg.libpg.util.toLocation
 import com.marcpg.pillarperil.PillarPeril
 import com.marcpg.pillarperil.Registry
@@ -45,7 +47,7 @@ object Configuration : Config(PaperConfigProvider()) {
     var endingCommands by custom("ending-commands", PPEntryTypes.placeholder.list, listOf())
     var respawnAtConfig by boolean("respawn-at-config")
 
-    var spawnGameMode by enum<GameMode>("player-spawn.game-mode", GameMode.ADVENTURE)
+    var spawnGameMode by custom("player-spawn.game-mode", PPEntryTypes.optionalGameMode, BasicOptional.ofNull())
     var spawnWorld by custom("player-spawn.world", PaperEntryTypes.world, BasicOptional.ofNull())
     var spawnCord by custom("player-spawn.location", ExtendedEntryTypes.cordMap, Cord(0.0, -64.0, 0.0))
 
@@ -70,10 +72,7 @@ object Configuration : Config(PaperConfigProvider()) {
      * editing the file and reloading are picked up without a restart.
      */
     val arenas: Map<String, Arena>
-        get() = provider.getSection("arenas").keys
-            // A section can be reported deeply, so only the first path element is the arena's name.
-            .map { it.substringBefore('.') }
-            .distinct()
+        get() = arenaNames()
             .mapNotNull { name ->
                 val world = provider.getString("arenas.$name.world", "")
                 if (world.isEmpty()) return@mapNotNull null
@@ -86,6 +85,9 @@ object Configuration : Config(PaperConfigProvider()) {
                         provider.getDouble("arenas.$name.location.y", 0.0),
                         provider.getDouble("arenas.$name.location.z", 0.0),
                     ),
+                    // Anything unreadable is reported by `loadChecking` and then simply left to the world.
+                    provider.getStringOrNull("arenas.$name.time")?.let { parseTimeOfDay(it) },
+                    provider.getSection("arenas.$name.gamerules").mapNotNull { (rule, value) -> value?.let { rule to it } }.toMap(),
                 )
             }
             .toMap()
@@ -181,11 +183,70 @@ object Configuration : Config(PaperConfigProvider()) {
         if (queueCheckIntervalSecs < 1 && queueCheckIntervalSecs != -1)
             result.second += "Invalid value $queueCheckIntervalSecs for configuration key 'queue.check-interval'."
 
+        result.second += checkArenas()
+
+        // A typo here silently means "leave the game mode alone", which is easy to miss.
+        val rawGameMode = provider.getStringOrNull("player-spawn.game-mode")
+        if (rawGameMode != null && rawGameMode.trim().lowercase() !in PPEntryTypes.KEEP_GAME_MODE && spawnGameMode.isNull)
+            result.second += "Invalid value '$rawGameMode' for configuration key 'player-spawn.game-mode'. Use a game mode or one of ${PPEntryTypes.KEEP_GAME_MODE.filter { it.isNotEmpty() }.joinToString()}."
+
+
         return result
+    }
+
+    /** The names of all configured arenas, whether they can be read or not. */
+    private fun arenaNames(): List<String> = provider.getSection("arenas").keys
+        // A section can be reported deeply, so only the first path element is the arena's name.
+        .map { it.substringBefore('.') }
+        .distinct()
+
+    /**
+     * Reports arena settings which cannot be read.
+     *
+     * Both the time of day and the game rules are skipped when they make no sense, since an arena
+     * people can still play in beats refusing to start games over a typo. Silently ignoring a setting
+     * is how somebody ends up debugging the wrong thing though, so it gets said out loud on every load.
+     */
+    private fun checkArenas(): List<String> = arenaNames().flatMap { name ->
+        val problems = mutableListOf<String>()
+
+        val rawTime = provider.getStringOrNull("arenas.$name.time")
+        if (rawTime != null && parseTimeOfDay(rawTime) == null)
+            problems += "Invalid value '$rawTime' for configuration key 'arenas.$name.time'. Use a tick of the day (0-24000) or one of ${NAMED_TIMES.keys.joinToString()}."
+
+        for ((rule, value) in provider.getSection("arenas.$name.gamerules")) {
+            val resolved = resolveGameRule(rule)
+
+            if (resolved == null)
+                problems += "Unknown game rule '$rule' in configuration key 'arenas.$name.gamerules'."
+            else if (value == null || gameRuleValueOf(resolved, value) == null)
+                problems += "Invalid value '$value' for the ${resolved.type.simpleName.lowercase()} game rule '$rule' in configuration key 'arenas.$name.gamerules'."
+        }
+
+        problems
     }
 }
 
 object PPEntryTypes {
+    /** The values of `player-spawn.game-mode` which mean "leave the player's game mode alone". */
+    val KEEP_GAME_MODE = setOf("previous", "keep", "restore", "none", "")
+
+    /**
+     * A game mode which may also be absent.
+     *
+     * Absent means the player keeps the game mode they had before their game, which is what most
+     * servers want - forcing one is only useful when the spawn is a lobby everybody belongs in.
+     */
+    val optionalGameMode = CustomEntryType(
+        BaseEntryTypes.string,
+        {
+            if (it.trim().lowercase() in KEEP_GAME_MODE) BasicOptional.ofNull()
+            else runCatching { enumValueNoCase<GameMode>(it) }.getOrNull().basicOptional()
+        },
+        { it.value?.name?.lowercase() ?: KEEP_GAME_MODE.first() },
+        "game-mode",
+    )
+
     val placeholder = CustomEntryType(
         BaseEntryTypes.string,
         { PlaceholderNameGetter(it) },

@@ -74,7 +74,7 @@ object Commands {
         val id = Game.generateId()
 
         // Copying a world takes a moment, so the outcome is reported from the callback instead of returned.
-        GameStarter.start(id, companion, players, timeLimit, { arena.center() }) { result ->
+        GameStarter.start(id, companion, players, arena, timeLimit) { result ->
             result.onSuccess {
                 source.sendMessage(source.locale().component("games.start.success", id, arena.name, color = NamedTextColor.GREEN))
             }.onFailure {
@@ -131,6 +131,11 @@ object Commands {
                     source.sendMessage(component("| ", NamedTextColor.DARK_GRAY)
                         .append(component(arena.name, if (loaded) NamedTextColor.GREEN else NamedTextColor.RED))
                         .append(component(" - ${arena.worldName} @ ${arena.cord.x}/${arena.cord.z}", NamedTextColor.GRAY)))
+
+                    // Only shown when set, as most arenas simply take their world as it is.
+                    arena.time?.let { source.sendMessage(component("|   time: $it", NamedTextColor.DARK_GRAY)) }
+                    if (arena.gameRules.isNotEmpty())
+                        source.sendMessage(component("|   game rules: " + arena.gameRules.entries.joinToString { "${it.key}=${it.value}" }, NamedTextColor.DARK_GRAY))
                 }
                 return@action null
             }

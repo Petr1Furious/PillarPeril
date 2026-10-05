@@ -84,7 +84,8 @@ data class PlayerSnapshot(
         if (restoreScoreboard)
             player.scoreboard = scoreboard
 
-        if (restoreHealth)
+        // Zero health is never restored: a snapshot taken while the player was dead would kill them again.
+        if (restoreHealth && health > 0.0)
             player.health = min(health, player.getAttributeSafe("MAX_HEALTH")?.value ?: 1.0)
 
         if (restoreHunger) {
