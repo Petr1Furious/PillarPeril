@@ -80,6 +80,41 @@ object Configuration : Config(PaperConfigProvider()) {
             ?: DEFAULT_ITEM_WEIGHTS
 
     /**
+     * The item groups, which make the items in them likely once a player is given one of them.
+     *
+     * Read on each access like [arenas], and absent-versus-empty is told apart the same way
+     * [itemWeights] does it.
+     */
+    val itemGroups: List<ItemGroup>
+        get() = itemGroupNames()?.mapNotNull { readItemGroup(it) } ?: DEFAULT_ITEM_GROUPS
+
+    /** The names of all configured item groups, or `null` when the section is not there at all. */
+    private fun itemGroupNames(): List<String>? = provider.getSectionOrNull("items.groups")
+        // A section is reported deeply, so only the first path element is the group's name.
+        ?.keys?.map { it.substringBefore('.') }?.distinct()
+
+    /** Reads one item group, skipping it when it has no items to give. */
+    private fun readItemGroup(name: String): ItemGroup? {
+        val path = "items.groups.$name"
+
+        val items = itemGroupPatterns("$path.items")
+        if (items.isEmpty()) return null
+
+        return itemGroup(
+            name,
+            itemWeightOf(provider.getRaw("$path.weight")) ?: DEFAULT_GROUP_WEIGHT,
+            items,
+            // Without triggers of its own, every item in the group sets off all the others.
+            itemGroupPatterns("$path.triggers").ifEmpty { items },
+            if (provider.getString("$path.mode", "").trim().lowercase() == GroupMode.REPEATING.name.lowercase())
+                GroupMode.REPEATING else GroupMode.ONCE,
+        )
+    }
+
+    private fun itemGroupPatterns(path: String): List<String> =
+        provider.getStringList(path)?.filter { it.isNotBlank() } ?: listOf()
+
+    /**
      * Every configured arena, keyed by name.
      *
      * Read straight from the provider on each access, so arenas added through `/pp-config` or by
@@ -199,6 +234,7 @@ object Configuration : Config(PaperConfigProvider()) {
 
         result.second += checkArenas()
         result.second += checkItemWeights()
+        result.second += checkItemGroups()
 
         // A typo here silently means "leave the game mode alone", which is easy to miss.
         val rawGameMode = provider.getStringOrNull("player-spawn.game-mode")
@@ -230,6 +266,43 @@ object Configuration : Config(PaperConfigProvider()) {
             val regex = wildcardRegex(pattern)
             if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
                 problems += "The item weight '$pattern' in 'items.weights' matches no item and does nothing."
+        }
+
+        return problems
+    }
+
+    /**
+     * Reports item groups which cannot be used.
+     *
+     * Same reasoning as [checkItemWeights]: a group that quietly does nothing is worse than one
+     * that is complained about, since the only symptom is items not turning up together.
+     */
+    private fun checkItemGroups(): List<String> {
+        val names = itemGroupNames() ?: return listOf()
+        val problems = mutableListOf<String>()
+
+        for (name in names) {
+            val path = "items.groups.$name"
+
+            val items = itemGroupPatterns("$path.items")
+            if (items.isEmpty()) {
+                problems += "The item group '$name' has no 'items' and does nothing. Remove it or list the items it should make likely."
+                continue
+            }
+
+            val rawMode = provider.getStringOrNull("$path.mode")
+            if (rawMode != null && rawMode.trim().lowercase() !in GROUP_MODES)
+                problems += "Invalid value '$rawMode' for configuration key '$path.mode'. Use ${GROUP_MODES.joinToString(" or ")}."
+
+            val rawWeight = provider.getRaw("$path.weight")
+            if (rawWeight != null && itemWeightOf(rawWeight) == null)
+                problems += "Invalid value '$rawWeight' for configuration key '$path.weight'. Use a whole number of 0 or more."
+
+            for (pattern in items + itemGroupPatterns("$path.triggers")) {
+                val regex = wildcardRegex(pattern)
+                if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
+                    problems += "The pattern '$pattern' in the item group '$name' matches no item and does nothing."
+            }
         }
 
         return problems

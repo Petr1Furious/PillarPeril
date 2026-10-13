@@ -6,6 +6,7 @@ import com.marcpg.libpg.display.SimpleScoreboard
 import com.marcpg.libpg.display.start
 import com.marcpg.pillarperil.game.Game
 import com.marcpg.pillarperil.util.Configuration
+import com.marcpg.pillarperil.util.ItemGroupState
 import com.marcpg.pillarperil.util.PoolItem
 import com.marcpg.pillarperil.util.randomByWeight
 import com.marcpg.pillarperil.util.playSoundSafe
@@ -36,6 +37,12 @@ class PillarPlayer(
      * they disconnected. This is where `/pillar-peril respawn` puts them back.
      */
     var lastLocation: Location? = null
+
+    /**
+     * What this player has been given so far, which is what the item groups weigh the pool by.
+     * Carried over when reconnecting, so a half-finished pair survives a disconnect.
+     */
+    var itemGroupState: ItemGroupState = ItemGroupState(game.itemGroups)
 
     /** The tick at which this player disconnected, or `null` while they are connected. */
     var disconnectedAt: Int? = null
@@ -77,7 +84,10 @@ class PillarPlayer(
 
     fun giveItems(available: Collection<PoolItem>, differentItems: Int = 1) {
         repeat(differentItems) {
-            var item = available.randomByWeight().createItemStack()
+            val chosen = available.randomByWeight { itemGroupState.weightOf(it) }
+            itemGroupState.record(chosen)
+
+            var item = chosen.createItemStack()
             for (modifier in game.modifiers) {
                 item = modifier.onItemReceive(item)
             }

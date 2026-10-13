@@ -78,6 +78,14 @@ abstract class Game(
     var radius: Double = 0.0
 
     lateinit var items: List<PoolItem> protected set
+
+    /**
+     * The item groups this game plays with.
+     *
+     * Read once when the game is created, so that reloading the configuration mid-game cannot leave
+     * players with groups nobody is tracking anymore.
+     */
+    val itemGroups: List<ItemGroup> = Configuration.itemGroups
     lateinit var buildings: Buildings private set
 
     // ==================== GAME STATE ====================
@@ -464,6 +472,7 @@ abstract class Game(
         fresh.deathTime = old.deathTime
         fresh.pillar = old.pillar
         fresh.lastLocation = old.lastLocation
+        fresh.itemGroupState = old.itemGroupState
 
         (initialPlayers as MutableList).replaceAll { if (it === old) fresh else it }
         if (stillAlive != -1)

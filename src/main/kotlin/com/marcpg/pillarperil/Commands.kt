@@ -285,6 +285,7 @@ object Commands {
 <dark_gray>Mode Layout: <yellow>${game.info.horGen().namespace}
 <dark_gray>Mode Item Countdown: <yellow>${game.info.itemCountdown()}
 <dark_gray>Item Pool: <yellow>${game.items.size} item(s), total weight ${game.items.sumOf { it.weight }}
+<dark_gray>Item Groups: <yellow>${game.itemGroups.size} (${game.itemGroups.joinToString()})
 <dark_gray>========================
 <dark_gray>Players:
 ${game.initialPlayers.joinToString { "<dark_gray>| <${if (it !in game.players) "red" else if (it.disconnected) "yellow" else "green"}>${it.name()}" }}

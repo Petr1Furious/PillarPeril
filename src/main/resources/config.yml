@@ -240,6 +240,95 @@ items:
     lingering_potion: 25
     tipped_arrow: 25
 
+  # Items which only make sense together, so that being given one of them makes the others likely.
+  # A happy ghast spawn egg with no harness is a wasted item cycle, and so is a bow with no arrows.
+  # Every group takes:
+  #
+  #   items:
+  #     The items the group makes likely, as the same patterns used above. Required.
+  #
+  #   triggers:
+  #     The items which set the group off. Left out, every item in the group triggers all the others,
+  #     which is what a matching pair wants: whichever half turns up first asks for the other.
+  #
+  #   weight:
+  #     The weight the group's items are drawn with while it is active, against the weight of 1 an
+  #     ordinary item has. A group never makes an item rarer than it already is.
+  #     Default: 250
+  #
+  #   mode:
+  #     | -> once       : an item stops being likely once the player has been given it, so a pair
+  #     |                 completes itself and is then done with.
+  #     | -> repeating  : the items stay likely for the rest of the game, which is what ammunition
+  #     |                 wants - a bow is worth something for as long as the arrows keep coming.
+  #     Default: once
+  #
+  # Remove the section entirely to go back to these defaults; leave it empty to use no groups at all.
+  groups:
+
+    # A happy ghast cannot be ridden without a harness, and a harness is nothing without the ghast.
+    happy-ghast:
+      weight: 600
+      items:
+        - happy_ghast_spawn_egg
+        - "*_harness"
+
+    # Gliding off a pillar is only an escape with something to fly on with.
+    elytra:
+      weight: 400
+      items:
+        - elytra
+        - firework_rocket
+
+    # TNT nobody can light is a decoration, and a lighter with nothing to light is a torch.
+    explosives:
+      weight: 400
+      items:
+        - tnt
+        - flint_and_steel
+
+    # A minecart only goes somewhere once there is rail under it.
+    minecart:
+      weight: 300
+      items:
+        - minecart
+        - rail
+
+    # A saddle is only a saddle once there is something to put it on.
+    saddle:
+      weight: 300
+      items:
+        - saddle
+        - pig_spawn_egg
+
+    # Outside the nether a respawn anchor is a bomb, but only a charged one.
+    respawn-anchor:
+      weight: 300
+      items:
+        - respawn_anchor
+        - glowstone
+
+    # A bow keeps being worth something for as long as the arrows keep coming.
+    archery:
+      mode: repeating
+      weight: 150
+      triggers:
+        - bow
+        - crossbow
+      items:
+        - arrow
+        - spectral_arrow
+        - tipped_arrow
+
+    # Rockets are ammunition too, but only for a crossbow.
+    rockets:
+      mode: repeating
+      weight: 150
+      triggers:
+        - crossbow
+      items:
+        - firework_rocket
+
 
 # Game Modes #
 # The settings of every game mode, named as '/pillar-peril start' knows them.

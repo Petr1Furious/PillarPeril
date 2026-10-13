@@ -32,9 +32,12 @@ class PoolItem(
  *
  * Weights are applied here rather than by repeating entries in the pool, so that a weight of 500
  * costs nothing but a larger number, and the pool keeps meaning "the items that can be given".
+ *
+ * @param weight What an item weighs for whoever is being given it, which is where the item groups
+ *   raise the weight of the items they are waiting for.
  */
-fun Collection<PoolItem>.randomByWeight(): PoolItem {
-    val total = sumOf { it.weight }
+fun Collection<PoolItem>.randomByWeight(weight: (PoolItem) -> Int = PoolItem::weight): PoolItem {
+    val total = sumOf { weight(it) }
 
     // Everything was weighted down to nothing, which is somebody's mistake rather than a wish to
     // hand out no items at all, so the weights are ignored instead.
@@ -42,10 +45,79 @@ fun Collection<PoolItem>.randomByWeight(): PoolItem {
 
     var roll = Random.nextInt(total)
     for (item in this) {
-        roll -= item.weight
+        roll -= weight(item)
         if (roll < 0) return item
     }
     return last() // Unreachable, as the roll is always below the total.
+}
+
+/** How long an item group keeps raising the weight of an item it covers. */
+enum class GroupMode {
+    /** Until the player has been given that item once, which is all a matching pair needs. */
+    ONCE,
+
+    /** For the rest of the game, which is what ammunition for a weapon wants. */
+    REPEATING,
+}
+
+/**
+ * A set of items that only make sense together, like a happy ghast and a harness.
+ *
+ * Being given one of the [triggers] makes every item the group [boosts] far more likely for that
+ * player, so the pieces of a pair tend to arrive within a few item cycles of each other instead of
+ * a spawn egg sitting uselessly in somebody's inventory for a whole game.
+ *
+ * With no triggers of its own a group is symmetric — every item in it sets off all the others.
+ */
+class ItemGroup(
+    val name: String,
+    /** The weight the covered items are drawn with while this group is active. */
+    val weight: Int,
+    val mode: GroupMode,
+    private val triggers: List<Regex>,
+    private val items: List<Regex>,
+) {
+    fun triggeredBy(id: String): Boolean = triggers.any { it.matches(id) }
+
+    fun boosts(id: String): Boolean = items.any { it.matches(id) }
+
+    override fun toString(): String = name
+}
+
+/**
+ * One player's progress through the item groups.
+ *
+ * Everything a player receives is remembered here, because a group only raises an item's weight
+ * once the player actually holds one of its triggers, and a [GroupMode.ONCE] group stops doing so
+ * for an item they have already been given.
+ */
+class ItemGroupState(private val groups: List<ItemGroup>) {
+    private val triggered = mutableSetOf<ItemGroup>()
+    private val received = mutableSetOf<String>()
+
+    /** Remembers an item the player was just given and sets off every group it triggers. */
+    fun record(item: PoolItem) {
+        val id = item.type.itemId()
+
+        received += id
+        triggered += groups.filter { it.triggeredBy(id) }
+    }
+
+    /**
+     * The weight to draw an item with for this player.
+     *
+     * A group never makes an item rarer than it already is, so an item weighted up in the
+     * configuration keeps that weight even when it belongs to a group with a smaller one.
+     */
+    fun weightOf(item: PoolItem): Int {
+        val id = item.type.itemId()
+
+        val boost = triggered
+            .filter { it.boosts(id) && (it.mode == GroupMode.REPEATING || id !in received) }
+            .maxOfOrNull { it.weight }
+
+        return maxOf(item.weight, boost ?: 0)
+    }
 }
 
 /**
@@ -107,6 +179,56 @@ val DEFAULT_ITEM_WEIGHTS = mapOf(
     "lingering_potion" to 25,
     "tipped_arrow" to 25,
 )
+
+/** The weight an item group gives its items when the configuration does not say. */
+const val DEFAULT_GROUP_WEIGHT = 250
+
+/** The accepted values of a group's `mode`, in the order [GroupMode] declares them. */
+val GROUP_MODES = GroupMode.entries.map { it.name.lowercase() }
+
+/**
+ * The item groups every game plays with by default.
+ *
+ * Mostly matching pairs: items which do nothing on their own, where handing out one of them is
+ * really a promise to hand out the other. The two repeating ones are ammunition, which stays
+ * useful however much of it a player already has.
+ */
+val DEFAULT_ITEM_GROUPS = listOf(
+    // A happy ghast cannot be ridden without a harness, and a harness is nothing without the ghast.
+    itemGroup("happy-ghast", 600, listOf("happy_ghast_spawn_egg", "*_harness")),
+
+    // Gliding off a pillar is only an escape with something to fly on with.
+    itemGroup("elytra", 400, listOf("elytra", "firework_rocket")),
+
+    // TNT nobody can light is a decoration, and a lighter with nothing to light is a torch.
+    itemGroup("explosives", 400, listOf("tnt", "flint_and_steel")),
+
+    // A minecart only goes somewhere once there is rail under it.
+    itemGroup("minecart", 300, listOf("minecart", "rail")),
+
+    // A saddle is only a saddle once there is something to put it on.
+    itemGroup("saddle", 300, listOf("saddle", "pig_spawn_egg")),
+
+    // Outside the nether a respawn anchor is a bomb, but only a charged one.
+    itemGroup("respawn-anchor", 300, listOf("respawn_anchor", "glowstone")),
+
+    // A bow keeps being worth something as long as the arrows keep coming.
+    itemGroup("archery", 150, listOf("arrow", "spectral_arrow", "tipped_arrow"),
+        triggers = listOf("bow", "crossbow"), mode = GroupMode.REPEATING),
+
+    // Rockets are ammunition too, but only for a crossbow.
+    itemGroup("rockets", 150, listOf("firework_rocket"),
+        triggers = listOf("crossbow"), mode = GroupMode.REPEATING),
+)
+
+/** Builds a group from configured patterns, defaulting to a symmetric set of items. */
+fun itemGroup(
+    name: String,
+    weight: Int = DEFAULT_GROUP_WEIGHT,
+    items: List<String>,
+    triggers: List<String> = items,
+    mode: GroupMode = GroupMode.ONCE,
+) = ItemGroup(name, weight, mode, triggers.map { wildcardRegex(it) }, items.map { wildcardRegex(it) })
 
 /** The item ids of every form a potion comes in, all of which need a potion type to be worth anything. */
 private val POTION_FORMS = setOf("potion", "splash_potion", "lingering_potion", "tipped_arrow")
