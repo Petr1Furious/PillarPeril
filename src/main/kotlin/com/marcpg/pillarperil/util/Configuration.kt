@@ -63,7 +63,21 @@ object Configuration : Config(PaperConfigProvider()) {
     var soundEffectsCooldown by int("sound-effects.cooldown", 3)
     var soundEffectsItem by boolean("sound-effects.item", true)
 
-    var itemsBlacklist by custom("items.blacklist", PPEntryTypes.minecraftRegistry(org.bukkit.Registry.ITEM).list, listOf(ItemType.AIR, ItemType.BEDROCK, ItemType.ENDER_DRAGON_SPAWN_EGG))
+    var itemsBlacklist by custom("items.blacklist", PPEntryTypes.minecraftRegistry(org.bukkit.Registry.ITEM).list, listOf(ItemType.AIR, ItemType.ENDER_DRAGON_SPAWN_EGG))
+    var itemsBlacklistPatterns by custom("items.blacklist-patterns", BaseEntryTypes.string.list, DEFAULT_BLACKLIST_PATTERNS)
+    var itemsBlacklistExceptions by custom("items.blacklist-exceptions", BaseEntryTypes.string.list, DEFAULT_BLACKLIST_EXCEPTIONS)
+
+    /**
+     * How often items are given relative to each other, keyed by pattern.
+     *
+     * A missing section means the defaults, while an empty one means somebody deliberately wants no
+     * weighting at all — the two cannot be the same, or turning the defaults off would be impossible.
+     */
+    val itemWeights: Map<String, Int>
+        get() = provider.getSectionOrNull("items.weights")
+            ?.mapNotNull { (pattern, value) -> itemWeightOf(value)?.let { pattern to it } }
+            ?.toMap()
+            ?: DEFAULT_ITEM_WEIGHTS
 
     /**
      * Every configured arena, keyed by name.
@@ -95,7 +109,7 @@ object Configuration : Config(PaperConfigProvider()) {
     var disposableWorldsEnabled by boolean("disposable-worlds.enabled", true)
     var disposableWorldMode by enum<DisposableWorldMode>("disposable-worlds.mode", DisposableWorldMode.VOID)
     var disposableWorldName by custom("disposable-worlds.name", PPEntryTypes.placeholder, PlaceholderNameGetter("pp-{id}"))
-    var disposableWorldMaxCopySize by int("disposable-worlds.max-copy-size", 512)
+    var disposableWorldMaxCopySize by int("disposable-worlds.max-copy-size", 128)
 
     var disableFastStats by boolean("disable-faststats", false)
 
@@ -184,6 +198,7 @@ object Configuration : Config(PaperConfigProvider()) {
             result.second += "Invalid value $queueCheckIntervalSecs for configuration key 'queue.check-interval'."
 
         result.second += checkArenas()
+        result.second += checkItemWeights()
 
         // A typo here silently means "leave the game mode alone", which is easy to miss.
         val rawGameMode = provider.getStringOrNull("player-spawn.game-mode")
@@ -193,6 +208,36 @@ object Configuration : Config(PaperConfigProvider()) {
 
         return result
     }
+
+    /**
+     * Reports item weights which cannot be used.
+     *
+     * A weight that names no existing item is almost always a typo, and since it changes nothing at
+     * all it would otherwise be invisible — somebody would be left wondering why their item never
+     * turned up any more often.
+     */
+    private fun checkItemWeights(): List<String> {
+        val section = provider.getSectionOrNull("items.weights") ?: return listOf()
+        val problems = mutableListOf<String>()
+
+        for ((pattern, value) in section) {
+            val weight = itemWeightOf(value)
+            if (weight == null) {
+                problems += "Invalid value '$value' for the item weight '$pattern' in 'items.weights'. Use a whole number of 0 or more."
+                continue
+            }
+
+            val regex = wildcardRegex(pattern)
+            if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
+                problems += "The item weight '$pattern' in 'items.weights' matches no item and does nothing."
+        }
+
+        return problems
+    }
+
+    /** Reads a configured weight, which has to be a whole number that is not negative. */
+    private fun itemWeightOf(value: Any?): Int? =
+        ((value as? Number)?.toInt() ?: value?.toString()?.toIntOrNull())?.takeIf { it >= 0 }
 
     /** The names of all configured arenas, whether they can be read or not. */
     private fun arenaNames(): List<String> = provider.getSection("arenas").keys

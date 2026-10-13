@@ -1,11 +1,11 @@
 package com.marcpg.pillarperil
 
 import com.marcpg.pillarperil.game.GameModifierCompanion
-import com.marcpg.pillarperil.game.mode.*
+import com.marcpg.pillarperil.game.mode.ChaosGame
+import com.marcpg.pillarperil.game.mode.ItemShuffleGame
+import com.marcpg.pillarperil.game.mode.OriginalGame
 import com.marcpg.pillarperil.generation.horizontal.CircularHorGen
 import com.marcpg.pillarperil.generation.horizontal.RandomHorGen
-import com.marcpg.pillarperil.generation.vertical.BlockVertGen
-import com.marcpg.pillarperil.generation.vertical.PillarVertGen
 
 object Registry {
     val horizontalGenerators = listOf(
@@ -13,19 +13,10 @@ object Registry {
         RandomHorGen,
     ).associateBy { it.namespace }
 
-    val verticalGenerators = listOf(
-        BlockVertGen,
-        PillarVertGen,
-    ).associateBy { it.namespace }
-
     val modes = listOf(
-        BlockyGame,
         ChaosGame,
-        ClassicGame,
-        ItemOnlyGame,
         ItemShuffleGame,
         OriginalGame,
-        PlayerShuffleGame,
     ).associateBy { it.gameInfo.namespace }
 
     val modifiers = listOf<GameModifierCompanion<*>>(
@@ -33,7 +24,6 @@ object Registry {
 
     fun load() {
         PillarPeril.LOG.info("[Registry] Loaded ${horizontalGenerators.size} horizontal generators as Map<Name, HorGen>.")
-        PillarPeril.LOG.info("[Registry] Loaded ${verticalGenerators.size} vertical generators as Map<Name, VertGen>.")
 
         PillarPeril.LOG.info("[Registry] Loaded ${modes.size} modes as Map<Name, Mode>.")
         PillarPeril.LOG.info("[Registry] Loaded ${modifiers.size} game modifiers as Map<Name, Modifier>.")

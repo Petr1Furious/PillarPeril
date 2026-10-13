@@ -5,7 +5,6 @@ import com.marcpg.pillarperil.game.GameCompanion
 import com.marcpg.pillarperil.game.GameModifier
 import com.marcpg.pillarperil.game.util.GameInfo
 import org.bukkit.Location
-import org.bukkit.Registry
 import org.bukkit.entity.Player
 
 class ChaosGame(id: String, center: Location, bukkitPlayers: List<Player>, modifiers: List<GameModifier>) : Game(id, center, bukkitPlayers, modifiers) {
@@ -18,8 +17,4 @@ class ChaosGame(id: String, center: Location, bukkitPlayers: List<Player>, modif
     }
 
     override val info: GameInfo = gameInfo
-
-    init {
-        items = Registry.ITEM.toList()
-    }
 }

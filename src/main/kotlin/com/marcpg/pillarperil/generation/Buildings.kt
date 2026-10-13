@@ -1,6 +1,7 @@
 package com.marcpg.pillarperil.generation
 
 import com.marcpg.pillarperil.game.Game
+import com.marcpg.pillarperil.util.Configuration
 import org.bukkit.Location
 import org.bukkit.block.BlockType
 import org.bukkit.block.data.BlockData
@@ -10,7 +11,6 @@ import org.bukkit.entity.Player
 class Buildings(
     val game: Game,
     val horizontalGen: HorizontalGen,
-    val verticalGen: VerticalGen,
 ) {
     var placedRadius = 0.0
 
@@ -41,8 +41,14 @@ class Buildings(
 
     fun generate(): List<Location> {
         val locations = horizontalGen.generate()
-        locations.forEach { verticalGen.generate(it.x, it.z) }
+        locations.forEach { placePillar(it.x, it.z) }
         return locations
+    }
+
+    /** Builds one pillar, from the bottom of the world up to the height the players stand at. */
+    private fun placePillar(x: Double, z: Double) {
+        for (y in game.world.minHeight..Configuration.platformHeight.toInt())
+            placeBlock(x, y, z, Configuration.platformMaterial)
     }
 
     fun reset() {

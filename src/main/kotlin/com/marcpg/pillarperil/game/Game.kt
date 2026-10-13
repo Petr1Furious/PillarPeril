@@ -21,7 +21,6 @@ import net.kyori.adventure.text.minimessage.MiniMessage
 import net.kyori.adventure.title.Title
 import org.bukkit.*
 import org.bukkit.entity.Player
-import org.bukkit.inventory.ItemType
 import org.bukkit.util.Vector
 import java.time.Duration
 import kotlin.math.atan2
@@ -78,7 +77,7 @@ abstract class Game(
 
     var radius: Double = 0.0
 
-    lateinit var items: List<ItemType> protected set
+    lateinit var items: List<PoolItem> protected set
     lateinit var buildings: Buildings private set
 
     // ==================== GAME STATE ====================
@@ -196,20 +195,13 @@ abstract class Game(
                 players += it
             }
 
-        @Suppress("DEPRECATION", "removal")
-        val enabledCheck: (ItemType) -> Boolean = getIfClassExists(
-            "io.papermc.paper.world.flag.FeatureDependant",
-            {{ world.isEnabled(it) }},
-            {{ it.isEnabledByFeature(world) }}
-        )
-
-        items = Registry.ITEM.filter { it !in Configuration.itemsBlacklist && enabledCheck(it) && info.additionalFilter(it) }.toList()
+        items = buildItemPool(world)
 
         radius = initialPlayers.size * Configuration.platformDistanceFactor / Math.TAU
 
         modifiers.forEach { it.init() }
 
-        buildings = Buildings(this, info.horGen().constructGen(this), info.vertGen().constructGen(this))
+        buildings = Buildings(this, info.horGen().constructGen(this))
         val centeredCenter = center.toCenterLocation()
         buildings.generate().forEachIndexed { i, l ->
             // Only X and Z get centered: toCenterLocation() would raise Y by another half block,
@@ -242,9 +234,27 @@ abstract class Game(
 
         GameManager.add(this)
         info("Initialized the game.")
+
+        // Without a start countdown the game is running already, so `release` never gets to do this.
+        if (started)
+            cycleItems()
     }
 
     open fun addItem(player: PillarPlayer) = player.giveItems(items)
+
+    /**
+     * Hands everyone their items and restarts the countdown to the next cycle.
+     *
+     * Also runs the moment the game begins, so that the first items are there when players are let
+     * loose instead of a whole cooldown later, with everybody standing around on their pillar.
+     */
+    private fun cycleItems() {
+        modifiers.forEach { it.onItemCycle() }
+        itemEvents.forEach { it() }
+
+        players.forEach { addItem(it) }
+        itemCountdown.set(info.itemCountdown())
+    }
 
     // ================= UTILITY METHODS =================
 
@@ -303,6 +313,11 @@ abstract class Game(
         players -= player
         info("$player got eliminated.")
 
+        // An offline player has nothing useful to read here, but `disconnect` already wrote down
+        // where they were standing when they left.
+        if (player.player.isOnline)
+            player.lastLocation = player.player.location.clone()
+
         player.deathTime = Bukkit.getCurrentTick()
 
         modifiers.forEach { it.onPlayerDeath(player) }
@@ -324,7 +339,9 @@ abstract class Game(
 
             // Ending the game already sent everyone to the spawn and may have thrown the arena's world
             // away, so placing this player now would strand them in a world that no longer exists.
-            if (!ending)
+            // An admin respawning them within this very second puts them back on a pillar, which this
+            // would then undo.
+            if (!ending && player !in players)
                 placeEliminated(player)
 
             modifiers.forEach { it.onPostPlayerDeath(player) }
@@ -347,6 +364,67 @@ abstract class Game(
         }
     }
 
+    /**
+     * Puts a player who is out, or stuck, back into the game where they left it.
+     *
+     * This is not a second chance handed out casually — it is for the times the game itself got
+     * somebody killed, like a death on the very tick the game started. They come back where they
+     * were, so whatever they built is still theirs to stand on.
+     *
+     * @return `false` if they were never part of this game, are offline, or the game is already over.
+     */
+    fun respawn(bukkitPlayer: Player): Boolean {
+        if (ending || !bukkitPlayer.isOnline) return false
+        val player = player(bukkitPlayer, onlyAlive = false) ?: return false
+
+        // Nothing below reaches a player who is still sitting on the death screen.
+        bukkitPlayer.reviveIfDead()
+
+        val destination = respawnLocation(player)
+
+        if (player !in players) {
+            players += player
+            player.deathTime = null
+            player.startDisplays()
+            refreshTargets()
+        }
+        player.disconnectedAt = null
+
+        bukkitPlayer.gameMode = GameMode.SURVIVAL
+        bukkitPlayer.clearActivePotionEffects()
+        bukkitPlayer.foodLevel = 20
+        bukkitPlayer.saturation = 20.0f
+
+        val maxHealth = bukkitPlayer.getAttributeSafe("MAX_HEALTH")?.value
+        if (maxHealth != null) {
+            bukkitPlayer.health = maxHealth
+        } else {
+            bukkitPlayer.heal(999.0)
+        }
+
+        player.teleport(destination)
+        bukkitPlayer.velocity = Vector()
+        bukkitPlayer.fallDistance = 0.0f
+
+        // Everybody else is frozen and protected until the grace period ends, so a late arrival gets the same.
+        bukkitPlayer.isInvulnerable = !started
+
+        announce("info.respawn", player.name(), color = NamedTextColor.GREEN)
+        info("$player was put back into the game at ${destination.blockX}/${destination.blockY}/${destination.blockZ}.")
+        return true
+    }
+
+    /**
+     * Where a respawning player belongs: where they died, unless that is below the arena.
+     *
+     * Putting somebody back into the hole they fell into would only kill them again, so a death
+     * below the pillars sends them to their own pillar instead.
+     */
+    private fun respawnLocation(player: PillarPlayer): Location =
+        player.lastLocation?.takeIf { it.world == world && it.y >= Configuration.deathHeight }
+            ?: player.pillar
+            ?: center
+
     // ================ MEMBERSHIP METHODS ================
 
     /**
@@ -357,6 +435,7 @@ abstract class Game(
         if (ending || player.disconnected || player !in players) return
 
         player.disconnectedAt = Bukkit.getCurrentTick()
+        player.lastLocation = player.player.location.clone()
         player.stopDisplays()
 
         val grace = Time(Configuration.reconnectGrace.toLong(), Time.Unit.SECONDS)
@@ -384,6 +463,7 @@ abstract class Game(
         fresh.kills = old.kills
         fresh.deathTime = old.deathTime
         fresh.pillar = old.pillar
+        fresh.lastLocation = old.lastLocation
 
         (initialPlayers as MutableList).replaceAll { if (it === old) fresh else it }
         if (stillAlive != -1)
@@ -449,11 +529,7 @@ abstract class Game(
 
         if (tick.isSecond(startingTick)) {
             if (itemCountdown.get() <= 0) {
-                modifiers.forEach { it.onItemCycle() }
-                itemEvents.forEach { it() }
-
-                players.forEach { addItem(it) }
-                itemCountdown.set(info.itemCountdown())
+                cycleItems()
             } else {
                 players.playSoundSafe(Sound.UI_BUTTON_CLICK, 0.2f, 2.0f) {
                     itemCountdown.get() <= Configuration.soundEffectsCooldown
@@ -508,6 +584,8 @@ abstract class Game(
             ))
         }
         players.playSoundSafe(Sound.ENTITY_PLAYER_LEVELUP, 0.75f, 1.2f)
+
+        cycleItems()
 
         info("The grace period is over, the game is now running.")
     }

@@ -7,13 +7,11 @@ import com.marcpg.pillarperil.PillarPeril
 import com.marcpg.pillarperil.Registry
 import com.marcpg.pillarperil.game.GameCompanion
 import com.marcpg.pillarperil.generation.HorGenCompanion
-import com.marcpg.pillarperil.generation.VertGenCompanion
 import com.marcpg.pillarperil.util.Configuration
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.Style
 import net.kyori.adventure.text.format.TextColor
 import net.kyori.adventure.text.format.TextDecoration
-import org.bukkit.inventory.ItemType
 import java.util.*
 
 @Suppress("UnstableApiUsage")
@@ -29,10 +27,6 @@ data class GameInfo(
     val showBossBar: () -> Boolean = { Configuration.provider.getBoolean("modes.$namespace.visual.show-bossbar") },
 
     val horGen: () -> HorGenCompanion<*> = { Configuration.provider.getString("modes.$namespace.generator.horizontal", "circular").toHorGen() },
-    val vertGen: () -> VertGenCompanion<*> = { Configuration.provider.getString("modes.$namespace.generator.vertical", "pillar").toVertGen() },
-
-    // Additional filter applied to the receivable item list:
-    val additionalFilter: ((ItemType) -> Boolean) = { true },
 ) {
     val keyStyle: () -> Style = { Style.style(accentColor(), TextDecoration.BOLD) }
     val valueStyle = Style.style(NamedTextColor.GRAY).decoration(TextDecoration.BOLD, TextDecoration.State.FALSE)
@@ -48,11 +42,4 @@ private fun String?.toHorGen(): HorGenCompanion<*> {
     if (horGen == null)
         PillarPeril.LOG.error("Configured horizontal generator '$this' does not exist!")
     return horGen ?: Registry.horizontalGenerators.values.first()
-}
-
-private fun String?.toVertGen(): VertGenCompanion<*> {
-    val vertGen = Registry.verticalGenerators[this]
-    if (vertGen == null)
-        PillarPeril.LOG.error("Configured vertical generator '$this' does not exist!")
-    return vertGen ?: Registry.verticalGenerators.values.first()
 }

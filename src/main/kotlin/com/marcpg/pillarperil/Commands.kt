@@ -68,8 +68,10 @@ object Commands {
         if (players.isEmpty())
             return source.locale().component("games.start.no_players", color = NamedTextColor.RED)
 
-        if (players.any { GameManager.player(it, false) != null })
-            return source.locale().component("games.start.player_in_game", color = NamedTextColor.RED)
+        // Covers games which are still being created as well, so two starts in a row cannot both grab a player.
+        val busy = GameStarter.busyPlayers(players)
+        if (busy.isNotEmpty())
+            return source.locale().component("games.start.player_in_game", busy.joinToString { it.name }, color = NamedTextColor.RED)
 
         val id = Game.generateId()
 
@@ -84,6 +86,24 @@ object Commands {
             }
         }
         return null
+    }
+
+    /**
+     * Puts a player back into the game they are part of, at the spot they left it.
+     *
+     * Deliberately limited to players who were in that game to begin with: for anybody else there
+     * is no spot to put them back to, and a game is not something to be joined halfway through.
+     */
+    private fun respawnPlayer(context: CommandContext<CommandSourceStack>, target: Player): Component {
+        val source = context.exec()
+
+        val game = GameManager.gameOf(target, onlyAlive = false)
+            ?: return source.locale().component("games.respawn.not_in_game", target.name, color = NamedTextColor.RED)
+
+        if (!game.respawn(target))
+            return source.locale().component("games.respawn.failed", target.name, color = NamedTextColor.RED)
+
+        return source.locale().component("games.respawn.success", target.name, game.id, color = NamedTextColor.GREEN)
     }
 
     val game = command<CommandSourceStack>("pillar-peril") {
@@ -170,6 +190,21 @@ object Commands {
                 }
             }
         }
+        subcommand("respawn") {
+            require("pillarperil.respawn")
+
+            // Without an argument, whoever ran it respawns themselves.
+            playerAction { context, player -> respawnPlayer(context, player) }
+
+            argument("player", ArgumentTypes.player()) {
+                action { context ->
+                    val target = context.arg<PlayerSelectorArgumentResolver>("player").resolve(context.source).firstOrNull()
+                        ?: return@action context.exec().locale().component("games.start.no_players", color = NamedTextColor.RED)
+
+                    return@action respawnPlayer(context, target)
+                }
+            }
+        }
         subcommand("time") {
             require("pillarperil.time")
             argument("game", ExtendedArgumentTypes.valued { GameManager.games.keys }.paper()) {
@@ -247,8 +282,9 @@ object Commands {
 <dark_gray>========================
 <dark_gray>Mode Name: <yellow>${game.info.name(source.locale())}
 <dark_gray>Mode Color: <${game.info.accentColor().asHexString()}>${game.info.accentColor().asHexString()}
-<dark_gray>Mode Generator: <yellow>${game.info.vertGen()}
+<dark_gray>Mode Layout: <yellow>${game.info.horGen().namespace}
 <dark_gray>Mode Item Countdown: <yellow>${game.info.itemCountdown()}
+<dark_gray>Item Pool: <yellow>${game.items.size} item(s), total weight ${game.items.sumOf { it.weight }}
 <dark_gray>========================
 <dark_gray>Players:
 ${game.initialPlayers.joinToString { "<dark_gray>| <${if (it !in game.players) "red" else if (it.disconnected) "yellow" else "green"}>${it.name()}" }}

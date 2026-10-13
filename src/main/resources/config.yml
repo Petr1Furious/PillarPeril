@@ -177,46 +177,98 @@ sound-effects:
 
 # Items #
 # All settings related to the items players can receive.
+# Potions, splash potions, lingering potions and tipped arrows are given with a random effect rolled
+# for each one, as the plain item carries no effect at all. The effect-less potion types (water,
+# mundane, thick and awkward) are never used.
 items:
 
   # A list of all items which will never be given to players, independent of the game mode.
   blacklist:
     - air
-    - bedrock
     - ender_dragon_spawn_egg
 
+  # The same, but matched as patterns, where '*' stands for any part of an item's name.
+  # A pattern without any '*' simply names one item, so whole families and single items can share this list.
+  # This exists because of how much of the item registry is filler: being handed one of the 23 pottery
+  # sherds or one of the 19 armour trims wastes an item cycle, and the operator's tools - command
+  # blocks, a debug stick, structure blocks - are not a game mechanic.
+  # Items which are useful stay in however many there are of them: beds, wool, concrete and glass are
+  # all perfectly good building material, and so are the blocks which cannot be crafted but still do
+  # something where they are placed, like barriers, spawners or budding amethyst.
+  blacklist-patterns:
+    # Decorative sets, useless without a crafting table, a jukebox or a mount.
+    - "*_banner_pattern"
+    - "*_pottery_sherd"
+    - "*_smithing_template"
+    - "*_harness"
+    - "*_dye"
+    - "*_horse_armor"
+    - "*_nautilus_armor"
+    - "music_disc_*"
+    - "disc_fragment_*"
+    # Operator tools, which do nothing for a player in survival.
+    - chain_command_block
+    - command_block
+    - command_block_minecart
+    - debug_stick
+    - frogspawn
+    - jigsaw
+    - knowledge_book
+    - light
+    - repeating_command_block
+    - structure_block
+    - structure_void
 
-# Default Game Modes #
-# Allows you to configure various properties of the default game modes.
+  # Items which stay in the pool even though a pattern above matches them.
+  # Useful for keeping one member of a family that is otherwise dropped, as done here with the
+  # happy ghast harnesses: one is a fine joke of an item to be handed, sixteen are a colour catalogue.
+  blacklist-exceptions:
+    - white_harness
+
+  # How often items are given relative to each other, as the same patterns used above.
+  # Everything not mentioned here has a weight of 1. A weight of 25 therefore means "25 times as
+  # likely as an ordinary item", and a weight of 0 keeps an item out of the pool entirely, the same
+  # as blacklisting it.
+  # Where several patterns match one item, the longest pattern wins, so 'splash_potion: 1' keeps its
+  # weight next to a '*potion: 25'. The order of the lines does not matter.
+  # Potions are weighted up by default because there are only four potion items against hundreds of
+  # blocks: at an even weight, a player saw one roughly every sixth game.
+  # Remove the section entirely to go back to these defaults; leave it empty to weight nothing.
+  weights:
+    potion: 25
+    splash_potion: 25
+    lingering_potion: 25
+    tipped_arrow: 25
+
+
+# Game Modes #
+# The settings of every game mode, named as '/pillar-peril start' knows them.
+# A mode missing from this section still works and simply uses the values shown as defaults below.
+#
+# Every mode takes the same keys:
+#
+#   cooldown: 5
+#     The time in seconds between receiving items.
+#
+#   time-limit: 5min
+#     How long a game can last at most. Please only use one time unit, like '90s', '5min' or '1h'.
+#
+#   visual:
+#     color: "#FFFFFF"
+#       The theme color of the mode as a hex code, used for the scoreboard and its messages.
+#     show-scoreboard: true
+#       Whether to show a scoreboard with the mode, the time left and everyone's kills.
+#     show-actionbar: false
+#       Whether to show the item countdown in the action bar.
+#     show-bossbar: false
+#       Whether to show the item countdown as a boss bar.
+#
+#   generator:
+#     horizontal: circular
+#       The layout the pillars are built in. Either "circular" or "random".
 modes:
 
-  # Example Mode - Example mode to explain what each value does.
-  example:
-    cooldown: 5 # The cooldown (in seconds) between receiving an item.
-    time-limit: 5min # The total amount of time a game can last. Please only use one time unit.
-    visual:
-      color: "#FFFFFF" # The theme color (as hex code) of the game. Will be used in the scoreboard for example.
-      show-scoreboard: true # Whether to show a scoreboard with some info or not.
-      show-actionbar: false # Whether to show an actionbar with the item countdown or not.
-      show-bossbar: false # Whether to show a bossbar with the item countdown or not.
-    generator:
-      horizontal: circular # The horizontal generator, so the layout of vertical pillars/blocks. Either "circular" or "random".
-      vertical: pillar # The vertical generator, so the type of platform. Either "pillar" or "block".
-
-  # Blocky Mode - Starts with a weapon; only blocks are given.
-  blocky:
-    cooldown: 10
-    time-limit: 4min
-    visual:
-      color: "#FFAA00"
-      show-scoreboard: true
-      show-actionbar: false
-      show-bossbar: false
-    generator:
-      horizontal: circular
-      vertical: pillar
-
-  # Chaos Mode - No filters, randomized pillars, fast item cooldown.
+  # Chaos Mode - Randomized pillar layout, fast item cooldown.
   chaos:
     cooldown: 3
     time-limit: 8min
@@ -227,33 +279,6 @@ modes:
       show-bossbar: true
     generator:
       horizontal: random
-      vertical: pillar
-
-  # Classic Mode - Classic rules, inspired by CubeCraft.
-  classic:
-    cooldown: 5
-    time-limit: 5min
-    visual:
-      color: "#53A4FF"
-      show-scoreboard: true
-      show-actionbar: false
-      show-bossbar: false
-    generator:
-      horizontal: circular
-      vertical: pillar
-
-  # Item-Only Mode - Only items (no blocks): long & tough.
-  item-only:
-    cooldown: 10
-    time-limit: 10min
-    visual:
-      color: "#FFFF55"
-      show-scoreboard: true
-      show-actionbar: false
-      show-bossbar: false
-    generator:
-      horizontal: circular
-      vertical: pillar
 
   # Item Shuffle Mode - Items replaced every 10s (9 new items).
   item-shuffle:
@@ -266,7 +291,6 @@ modes:
       show-bossbar: false
     generator:
       horizontal: circular
-      vertical: pillar
 
   # Original Mode - Original gameplay as seen in early videos.
   original:
@@ -279,20 +303,6 @@ modes:
       show-bossbar: true
     generator:
       horizontal: circular
-      vertical: pillar
-
-  # Player Shuffle Mode - All players randomly swapped every 10s.
-  player-shuffle:
-    cooldown: 10
-    time-limit: 5min
-    visual:
-      color: "#54FFAF"
-      show-scoreboard: true
-      show-actionbar: true
-      show-bossbar: false
-    generator:
-      horizontal: circular
-      vertical: pillar
 
 
 # Arenas #
@@ -357,8 +367,8 @@ disposable-worlds:
   # Copying a large survival world per game would take minutes and fill up the disk, so games are
   # refused rather than started in the template world, which would damage it.
   # Set to 0 to allow any size.
-  # Default: 512
-  max-copy-size: 512
+  # Default: 128
+  max-copy-size: 128
 
 
 # Disable FastStats Integration #

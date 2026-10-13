@@ -25,7 +25,5 @@ class ItemShuffleGame(id: String, center: Location, bukkitPlayers: List<Player>,
                 p.giveItems(items, differentItems = 9)
             }
         }
-
-        players.forEach { it.giveItems(items) }
     }
 }

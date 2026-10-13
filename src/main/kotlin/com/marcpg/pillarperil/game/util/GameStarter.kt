@@ -9,6 +9,7 @@ import com.marcpg.pillarperil.util.Configuration
 import com.marcpg.pillarperil.util.DisposableWorldMode
 import com.marcpg.pillarperil.util.GameWorlds
 import org.bukkit.entity.Player
+import java.util.UUID
 
 /**
  * The single pipeline every game start goes through, no matter whether it came from `/game start` or the queue.
@@ -20,6 +21,19 @@ import org.bukkit.entity.Player
  * 4. constructing and initializing the game itself
  */
 object GameStarter {
+    /**
+     * The players of games which are still being started.
+     *
+     * A game only registers itself with [GameManager] once it is initialized, and creating a
+     * temporary world for it takes a moment, so between those two points a second start would
+     * otherwise happily grab the same players.
+     */
+    private val starting = mutableSetOf<UUID>()
+
+    /** The given players who are already in a game, or about to be put into one. */
+    fun busyPlayers(players: Collection<Player>): List<Player> =
+        players.filter { it.uniqueId in starting || GameManager.player(it, onlyAlive = false) != null }
+
     /**
      * Starts a game.
      *
@@ -36,6 +50,19 @@ object GameStarter {
         timeLimit: Time? = null,
         callback: (Result<Game>) -> Unit,
     ) {
+        val busy = busyPlayers(players)
+        if (busy.isNotEmpty()) {
+            callback(Result.failure(IllegalStateException("Already in a game: ${busy.joinToString { it.name }}.")))
+            return
+        }
+
+        starting += players.map { it.uniqueId }
+        // Every path out of here has to release the players again, successful or not.
+        val finish: (Result<Game>) -> Unit = {
+            starting -= players.map { player -> player.uniqueId }
+            callback(it)
+        }
+
         val placeholders = mutableMapOf<String, Any>(
             "id" to id,
             "mode" to mode.gameInfo.namespace,
@@ -46,7 +73,7 @@ object GameStarter {
 
         val requested = arena.center()
         if (requested == null) {
-            callback(Result.failure(IllegalStateException("The world '${arena.worldName}' of arena '${arena.name}' does not exist.")))
+            finish(Result.failure(IllegalStateException("The world '${arena.worldName}' of arena '${arena.name}' does not exist.")))
             return
         }
 
@@ -55,7 +82,7 @@ object GameStarter {
                 // In the copy mode the requested world is the template being cloned, so falling back to it
                 // would play the game inside the very world that was supposed to stay untouched.
                 if (Configuration.disposableWorldMode == DisposableWorldMode.COPY) {
-                    callback(Result.failure(failure))
+                    finish(Result.failure(failure))
                     return@prepare
                 }
 
@@ -73,7 +100,7 @@ object GameStarter {
             )
             Configuration.startPostCommands.forEach { PillarPeril.sendCommand(it(placeholders)) }
 
-            callback(runCatching {
+            finish(runCatching {
                 // TODO: Supply list of modifiers here:
                 mode.constructGame(id, center, players, listOf()).apply {
                     this.arena = arena

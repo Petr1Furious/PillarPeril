@@ -6,11 +6,12 @@ import com.marcpg.libpg.display.SimpleScoreboard
 import com.marcpg.libpg.display.start
 import com.marcpg.pillarperil.game.Game
 import com.marcpg.pillarperil.util.Configuration
+import com.marcpg.pillarperil.util.PoolItem
+import com.marcpg.pillarperil.util.randomByWeight
 import com.marcpg.pillarperil.util.playSoundSafe
 import org.bukkit.Location
 import org.bukkit.Sound
 import org.bukkit.entity.Player
-import org.bukkit.inventory.ItemType
 
 class PillarPlayer(
     player: Player,
@@ -29,6 +30,12 @@ class PillarPlayer(
 
     /** The spawn location on top of this player's own pillar. */
     var pillar: Location? = null
+
+    /**
+     * Where this player was last seen inside the game: where they died, or where they stood when
+     * they disconnected. This is where `/pillar-peril respawn` puts them back.
+     */
+    var lastLocation: Location? = null
 
     /** The tick at which this player disconnected, or `null` while they are connected. */
     var disconnectedAt: Int? = null
@@ -68,9 +75,9 @@ class PillarPlayer(
         simpleActionBar = null
     }
 
-    fun giveItems(available: Collection<ItemType>, differentItems: Int = 1) {
+    fun giveItems(available: Collection<PoolItem>, differentItems: Int = 1) {
         repeat(differentItems) {
-            var item = available.random().createItemStack()
+            var item = available.randomByWeight().createItemStack()
             for (modifier in game.modifiers) {
                 item = modifier.onItemReceive(item)
             }
