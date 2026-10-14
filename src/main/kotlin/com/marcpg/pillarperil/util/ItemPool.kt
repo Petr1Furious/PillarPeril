@@ -1,13 +1,11 @@
 package com.marcpg.pillarperil.util
 
-import com.marcpg.libpg.util.miniMessage
-import org.bukkit.Color
-import org.bukkit.FireworkEffect
+import com.mojang.brigadier.StringReader
+import io.papermc.paper.command.brigadier.argument.ArgumentTypes
 import org.bukkit.Registry
 import org.bukkit.World
 import org.bukkit.inventory.ItemStack
 import org.bukkit.inventory.ItemType
-import org.bukkit.inventory.meta.FireworkMeta
 import org.bukkit.inventory.meta.PotionMeta
 import org.bukkit.potion.PotionType
 import kotlin.random.Random
@@ -15,20 +13,21 @@ import kotlin.random.Random
 /**
  * One thing a player can be given.
  *
- * Most items are fully described by their type, but a few carry data without which the item is
- * meaningless — a `potion` with no potion type is just an empty bottle. Those roll their data at
- * the moment they are handed out, so a single pool entry covers every variant instead of flooding
- * the pool with one entry per variant, which would make potions a tenth of everything given.
+ * Most entries are a plain item out of the registry, but two kinds carry data as well. Some roll it
+ * as they are handed out, because the item means nothing without it and listing every variant would
+ * flood the pool — a `potion` with no potion type is just an empty bottle. The others are the custom
+ * items from the configuration, which are a fixed variant of an item under a name of their own.
  */
 class PoolItem(
-    val type: ItemType,
+    /** What the configuration calls this item: an item id, or the name of a custom item. */
+    val id: String,
     /** How often this item comes up relative to the others. Zero means it is never given at all. */
     val weight: Int = 1,
-    private val creator: (ItemType) -> ItemStack = { it.createItemStack() },
+    private val creator: () -> ItemStack,
 ) {
-    fun createItemStack(): ItemStack = creator(type)
+    fun createItemStack(): ItemStack = creator()
 
-    override fun toString(): String = type.itemId()
+    override fun toString(): String = id
 }
 
 /**
@@ -80,23 +79,10 @@ class ItemGroup(
     val mode: GroupMode,
     private val triggers: List<Regex>,
     private val items: List<Regex>,
-    /** The name to give an item instead of the one it comes with, keyed by pattern. */
-    private val names: List<Pair<Regex, String>>,
 ) {
     fun triggeredBy(id: String): Boolean = triggers.any { it.matches(id) }
 
     fun boosts(id: String): Boolean = items.any { it.matches(id) }
-
-    /**
-     * The name this group gives an item, or `null` when it leaves the item named as it is.
-     *
-     * The longest matching pattern wins, as with the configured weights, so the order of the lines
-     * does not decide anything.
-     */
-    fun nameFor(id: String): String? = names
-        .filter { it.first.matches(id) }
-        .maxByOrNull { it.first.pattern.length }
-        ?.second
 
     override fun toString(): String = name
 }
@@ -114,10 +100,8 @@ class ItemGroupState(private val groups: List<ItemGroup>) {
 
     /** Remembers an item the player was just given and sets off every group it triggers. */
     fun record(item: PoolItem) {
-        val id = item.type.itemId()
-
-        received += id
-        triggered += groups.filter { it.triggeredBy(id) }
+        received += item.id
+        triggered += groups.filter { it.triggeredBy(item.id) }
     }
 
     /**
@@ -127,22 +111,7 @@ class ItemGroupState(private val groups: List<ItemGroup>) {
      * configuration keeps that weight even when it belongs to a group with a smaller one.
      */
     fun weightOf(item: PoolItem): Int =
-        maxOf(item.weight, activeFor(item.type.itemId()).maxOfOrNull { it.weight } ?: 0)
-
-    /**
-     * The name an active group wants this item handed out under, or `null` for its own name.
-     *
-     * Only a group which is raising the item right now gets to rename it, so a rocket drawn before
-     * the player owns a crossbow is still a plain rocket. Has to be asked before [record], which is
-     * what ends a [GroupMode.ONCE] group.
-     */
-    fun nameFor(item: PoolItem): String? {
-        val id = item.type.itemId()
-
-        return activeFor(id)
-            .sortedByDescending { it.weight }
-            .firstNotNullOfOrNull { it.nameFor(id) }
-    }
+        maxOf(item.weight, activeFor(item.id).maxOfOrNull { it.weight } ?: 0)
 
     /** The groups currently raising this item for the player. */
     private fun activeFor(id: String): List<ItemGroup> = triggered
@@ -245,10 +214,10 @@ val DEFAULT_ITEM_GROUPS = listOf(
     itemGroup("archery", 150, listOf("arrow", "spectral_arrow", "tipped_arrow"),
         triggers = listOf("bow", "crossbow"), mode = GroupMode.REPEATING),
 
-    // Rockets are ammunition too, but only for a crossbow, which the name says out loud.
-    itemGroup("rockets", 150, listOf("firework_rocket"),
-        triggers = listOf("crossbow"), mode = GroupMode.REPEATING,
-        names = mapOf("firework_rocket" to "explosive_firework_rocket")),
+    // Rockets are ammunition too, but only for a crossbow, and only the explosive ones are worth
+    // shooting - the plain rocket from the elytra group above does no damage at all.
+    itemGroup("rockets", 150, listOf(EXPLOSIVE_ROCKET),
+        triggers = listOf("crossbow"), mode = GroupMode.REPEATING),
 )
 
 /** Builds a group from configured patterns, defaulting to a symmetric set of items. */
@@ -258,21 +227,24 @@ fun itemGroup(
     items: List<String>,
     triggers: List<String> = items,
     mode: GroupMode = GroupMode.ONCE,
-    names: Map<String, String> = mapOf(),
-) = ItemGroup(
-    name,
-    weight,
-    mode,
-    triggers.map { wildcardRegex(it) },
-    items.map { wildcardRegex(it) },
-    names.map { (pattern, name) -> wildcardRegex(pattern) to name },
-)
+) = ItemGroup(name, weight, mode, triggers.map { wildcardRegex(it) }, items.map { wildcardRegex(it) })
 
 /** The item ids of every form a potion comes in, all of which need a potion type to be worth anything. */
 private val POTION_FORMS = setOf("potion", "splash_potion", "lingering_potion", "tipped_arrow")
 
-/** The item id of the firework rocket, which is a dud without an explosion in it. */
-private const val FIREWORK_ROCKET = "firework_rocket"
+/** The name of the explosive rocket in [DEFAULT_CUSTOM_ITEMS], which the rockets group hands out. */
+const val EXPLOSIVE_ROCKET = "explosive_firework_rocket"
+
+/**
+ * The custom items every game plays with by default, as definitions for [parseCustomItem].
+ *
+ * A rocket out of the registry carries no explosion, and vanilla only damages anything with a rocket
+ * that has one, so the plain item is a dud in a crossbow while staying exactly what a glider wants.
+ * The explosive variant is therefore an item of its own, which the rockets group gives.
+ */
+val DEFAULT_CUSTOM_ITEMS = mapOf(
+    EXPLOSIVE_ROCKET to """firework_rocket[fireworks={flight_duration:1,explosions:[{shape:"large_ball",colors:[I;16711680,16776960],has_trail:true}]},item_name={text:"Explosive Firework Rocket"}]""",
+)
 
 /**
  * Every potion type that actually does something.
@@ -299,6 +271,21 @@ fun wildcardRegex(pattern: String): Regex = pattern.trim().lowercase()
     .toRegex()
 
 /**
+ * Reads a custom item's definition, which is written exactly the way `/give` takes it.
+ *
+ * The command parser does the work on purpose: it is the one the game itself documents, it knows
+ * every component the running version has, and it says precisely what is wrong with a definition.
+ */
+fun parseCustomItem(definition: String): Result<ItemStack> = runCatching {
+    val reader = StringReader(definition.trim())
+    val stack = ArgumentTypes.itemStack().parse(reader)
+
+    require(!reader.canRead()) { "unexpected text after the item: '${reader.remaining}'" }
+
+    stack
+}
+
+/**
  * Builds the pool of items a game hands out.
  *
  * @param world The game's world, which decides whether experimental items exist at all.
@@ -316,13 +303,28 @@ fun buildItemPool(world: World): List<PoolItem> {
         {{ it.isEnabledByFeature(world) }}
     )
 
-    return Registry.ITEM
+    val registryItems = Registry.ITEM
         .filter { it !in blacklist && enabledCheck(it) }
         .filter { type ->
             val id = type.itemId()
             id in exceptions || patterns.none { it.matches(id) }
         }
-        .map { poolItem(it, weightOf(it, weights)) }
+        .map { poolItem(it, weightOf(it.itemId(), weights)) }
+
+    // The blacklist is not applied to these: defining a variant is saying you want it, whatever the
+    // patterns say about the item it is built from.
+    val customItems = Configuration.customItems.mapNotNull { (name, definition) ->
+        // A name that is already an item's would make two entries answer to it, so such a variant
+        // is left out. Both this and an unreadable definition were reported by `loadChecking`.
+        if (Registry.ITEM.any { it.itemId() == name }) return@mapNotNull null
+
+        val template = parseCustomItem(definition).getOrNull() ?: return@mapNotNull null
+        PoolItem(name, weightOf(name, weights)) { template.clone() }
+    }
+
+    // A weight of zero means the same as a blacklisting, so such an item leaves the pool entirely -
+    // left in it, a group could still raise it back above zero.
+    return (registryItems + customItems).filter { it.weight > 0 }
 }
 
 /**
@@ -332,58 +334,23 @@ fun buildItemPool(world: World): List<PoolItem> {
  * to a `*potion: 25`. Deciding it by length rather than by the order of the lines means the file
  * can be rearranged without quietly changing what it does.
  */
-private fun weightOf(type: ItemType, weights: List<Pair<Regex, Int>>): Int {
-    val id = type.itemId()
-    return weights
+private fun weightOf(id: String, weights: List<Pair<Regex, Int>>): Int =
+    weights
         .filter { it.first.matches(id) }
         .maxByOrNull { it.first.pattern.length }
         ?.second
         ?: 1
-}
 
 /** Wraps an item type into a pool entry, giving the ones that need extra data a creator which rolls it. */
-private fun poolItem(type: ItemType, weight: Int): PoolItem = when {
-    type.itemId() in POTION_FORMS && effectivePotionTypes.isNotEmpty() ->
-        PoolItem(type, weight) { it.createItemStack().apply { rollPotion() } }
+private fun poolItem(type: ItemType, weight: Int): PoolItem {
+    val id = type.itemId()
 
-    type.itemId() == FIREWORK_ROCKET ->
-        PoolItem(type, weight) { it.createItemStack().apply { rollFirework() } }
+    if (id !in POTION_FORMS || effectivePotionTypes.isEmpty())
+        return PoolItem(id, weight) { type.createItemStack() }
 
-    else -> PoolItem(type, weight)
+    return PoolItem(id, weight) { type.createItemStack().apply { rollPotion() } }
 }
-
-/**
- * Hands an item out under a different name.
- *
- * This sets the item name rather than a custom name, so it reads as what the item simply is instead
- * of something a player renamed on an anvil. The configured name goes through MiniMessage, so it can
- * be coloured.
- */
-fun ItemStack.overrideName(name: String) = editMeta { meta -> meta.itemName(miniMessage(name)) }
 
 /** Gives a potion, splash potion, lingering potion or tipped arrow an effect to carry. */
 private fun ItemStack.rollPotion() =
     editMeta(PotionMeta::class.java) { meta -> meta.basePotionType = effectivePotionTypes.random() }
-
-/**
- * Gives a firework rocket something to go off with.
- *
- * A rocket straight out of the registry has no explosions at all, and vanilla only damages anything
- * with a rocket that has at least one — so as crossbow ammunition the plain item is a dud that
- * bursts silently. One explosion is enough to make it a weapon, and it costs a glider some health
- * when they boost with it, which is a fair price for the escape.
- */
-private fun ItemStack.rollFirework() = editMeta(FireworkMeta::class.java) { meta ->
-    meta.power = Random.nextInt(1, 4)
-    meta.addEffect(
-        FireworkEffect.builder()
-            .with(FireworkEffect.Type.values().random())
-            .withColor(randomColor(), randomColor())
-            .withFade(randomColor())
-            .apply { if (Random.nextBoolean()) flicker(true) }
-            .apply { if (Random.nextBoolean()) trail(true) }
-            .build()
-    )
-}
-
-private fun randomColor(): Color = Color.fromRGB(Random.nextInt(0x1000000))

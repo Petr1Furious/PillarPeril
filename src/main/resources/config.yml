@@ -180,8 +180,6 @@ sound-effects:
 # Potions, splash potions, lingering potions and tipped arrows are given with a random effect rolled
 # for each one, as the plain item carries no effect at all. The effect-less potion types (water,
 # mundane, thick and awkward) are never used.
-# Firework rockets get a rolled explosion for the same reason: a rocket without one is a dud
-# that does no damage at all when shot from a crossbow.
 items:
 
   # A list of all items which will never be given to players, independent of the game mode.
@@ -242,12 +240,28 @@ items:
     lingering_potion: 25
     tipped_arrow: 25
 
+  # Variants of an item with data on them, each under a name of its own.
+  # A definition is written exactly the way '/give' takes it, so everything the server version
+  # understands works: components, enchantments, names, lore. The name on the left can then be used
+  # anywhere an item can - in the weights above and in the groups below - and a variant is an item
+  # of its own next to the plain one, so both can be handed out and mean different things.
+  # Variants are never dropped by the blacklist above, since defining one is saying you want it,
+  # and each takes a weight of 1 unless the weights above say otherwise.
+  # Remove the section entirely to go back to these defaults; leave it empty to define none.
+  custom:
+
+    # A rocket with a firework star in it, which is the only kind that damages anything it hits -
+    # the plain rocket from the registry is a dud in a crossbow, while staying just right for
+    # gliding. Every further explosion in the list adds 2 damage on top of the base 5.
+    explosive_firework_rocket: 'firework_rocket[fireworks={flight_duration:1,explosions:[{shape:"large_ball",colors:[I;16711680,16776960],has_trail:true}]},item_name={text:"Explosive Firework Rocket"}]'
+
   # Items which only make sense together, so that being given one of them makes the others likely.
   # A happy ghast spawn egg with no harness is a wasted item cycle, and so is a bow with no arrows.
   # Every group takes:
   #
   #   items:
-  #     The items the group makes likely, as the same patterns used above. Required.
+  #     The items the group makes likely, as the same patterns used above, custom items included.
+  #     Required.
   #
   #   triggers:
   #     The items which set the group off. Left out, every item in the group triggers all the others,
@@ -257,12 +271,6 @@ items:
   #     The weight the group's items are drawn with while it is active, against the weight of 1 an
   #     ordinary item has. A group never makes an item rarer than it already is.
   #     Default: 250
-  #
-  #   names:
-  #     A name to hand an item out under instead of the one it comes with, keyed by the same
-  #     patterns, so a player can tell an item a group gave them from an ordinary one. Only the
-  #     group raising an item right now gets to name it, and the names go through MiniMessage, so
-  #     something like '<red>Explosive Rocket' works too.
   #
   #   mode:
   #     | -> once       : an item stops being likely once the player has been given it, so a pair
@@ -328,16 +336,15 @@ items:
         - spectral_arrow
         - tipped_arrow
 
-    # Rockets are ammunition too, but only for a crossbow, which the name says out loud.
+    # Rockets are ammunition too, but only for a crossbow, and only the explosive ones are worth
+    # shooting - see the custom items above.
     rockets:
       mode: repeating
       weight: 150
       triggers:
         - crossbow
       items:
-        - firework_rocket
-      names:
-        firework_rocket: explosive_firework_rocket
+        - explosive_firework_rocket
 
 
 # Game Modes #

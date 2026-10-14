@@ -80,6 +80,21 @@ object Configuration : Config(PaperConfigProvider()) {
             ?: DEFAULT_ITEM_WEIGHTS
 
     /**
+     * The custom items, keyed by the name the rest of the configuration refers to them by.
+     *
+     * Only the definitions are kept here; reading one into an item is [parseCustomItem]'s job and
+     * happens once per game, so a definition fixed in the file applies to the next game started.
+     * Absent-versus-empty works as it does for [itemWeights].
+     */
+    val customItems: Map<String, String>
+        get() = provider.getSectionOrNull("items.custom")
+            ?.mapNotNull { (name, definition) ->
+                definition?.toString()?.takeIf { it.isNotBlank() }?.let { name.trim().lowercase() to it }
+            }
+            ?.toMap()
+            ?: DEFAULT_CUSTOM_ITEMS
+
+    /**
      * The item groups, which make the items in them likely once a player is given one of them.
      *
      * Read on each access like [arenas], and absent-versus-empty is told apart the same way
@@ -108,19 +123,11 @@ object Configuration : Config(PaperConfigProvider()) {
             itemGroupPatterns("$path.triggers").ifEmpty { items },
             if (provider.getString("$path.mode", "").trim().lowercase() == GroupMode.REPEATING.name.lowercase())
                 GroupMode.REPEATING else GroupMode.ONCE,
-            itemGroupNames(name),
         )
     }
 
     private fun itemGroupPatterns(path: String): List<String> =
         provider.getStringList(path)?.filter { it.isNotBlank() } ?: listOf()
-
-    /** The names a group hands its items out under, keyed by pattern. */
-    private fun itemGroupNames(group: String): Map<String, String> =
-        provider.getSectionOrNull("items.groups.$group.names")
-            ?.mapNotNull { (pattern, name) -> name?.toString()?.takeIf { it.isNotBlank() }?.let { pattern to it } }
-            ?.toMap()
-            ?: mapOf()
 
     /**
      * Every configured arena, keyed by name.
@@ -241,6 +248,7 @@ object Configuration : Config(PaperConfigProvider()) {
             result.second += "Invalid value $queueCheckIntervalSecs for configuration key 'queue.check-interval'."
 
         result.second += checkArenas()
+        result.second += checkCustomItems()
         result.second += checkItemWeights()
         result.second += checkItemGroups()
 
@@ -271,8 +279,7 @@ object Configuration : Config(PaperConfigProvider()) {
                 continue
             }
 
-            val regex = wildcardRegex(pattern)
-            if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
+            if (!matchesAnyItem(pattern))
                 problems += "The item weight '$pattern' in 'items.weights' matches no item and does nothing."
         }
 
@@ -307,24 +314,47 @@ object Configuration : Config(PaperConfigProvider()) {
                 problems += "Invalid value '$rawWeight' for configuration key '$path.weight'. Use a whole number of 0 or more."
 
             for (pattern in items + itemGroupPatterns("$path.triggers")) {
-                val regex = wildcardRegex(pattern)
-                if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
+                if (!matchesAnyItem(pattern))
                     problems += "The pattern '$pattern' in the item group '$name' matches no item and does nothing."
-            }
-
-            // A name for an item the group does not raise would never be used, since only the group
-            // handing an item out gets to name it.
-            val boosted = items.map { wildcardRegex(it) }
-            for (pattern in provider.getSectionOrNull("$path.names")?.keys ?: setOf()) {
-                val regex = wildcardRegex(pattern)
-                if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
-                    problems += "The name '$pattern' in the item group '$name' matches no item and does nothing."
-                else if (org.bukkit.Registry.ITEM.none { item -> regex.matches(item.itemId()) && boosted.any { it.matches(item.itemId()) } })
-                    problems += "The name '$pattern' in the item group '$name' names no item the group gives and does nothing."
             }
         }
 
         return problems
+    }
+
+    /**
+     * Reports custom items which cannot be used.
+     *
+     * A definition the parser cannot read is simply left out of the pool, so without this the only
+     * symptom would be an item nobody is ever given and a group waiting for it forever.
+     */
+    private fun checkCustomItems(): List<String> {
+        val section = provider.getSectionOrNull("items.custom") ?: return listOf()
+        val problems = mutableListOf<String>()
+
+        for ((name, definition) in section) {
+            val id = name.trim().lowercase()
+
+            if (definition == null || definition.toString().isBlank()) {
+                problems += "The custom item '$name' has no definition. Write the item the way '/give' takes it."
+                continue
+            }
+
+            if (org.bukkit.Registry.ITEM.any { it.itemId() == id })
+                problems += "The custom item '$name' is already the name of a real item. Give the variant a name of its own."
+
+            parseCustomItem(definition.toString()).onFailure {
+                problems += "The custom item '$name' cannot be read: ${it.message}"
+            }
+        }
+
+        return problems
+    }
+
+    /** Whether a configured pattern names anything at all, custom items included. */
+    private fun matchesAnyItem(pattern: String): Boolean {
+        val regex = wildcardRegex(pattern)
+        return org.bukkit.Registry.ITEM.any { regex.matches(it.itemId()) } || customItems.keys.any { regex.matches(it) }
     }
 
     /** Reads a configured weight, which has to be a whole number that is not negative. */
