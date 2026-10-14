@@ -108,11 +108,19 @@ object Configuration : Config(PaperConfigProvider()) {
             itemGroupPatterns("$path.triggers").ifEmpty { items },
             if (provider.getString("$path.mode", "").trim().lowercase() == GroupMode.REPEATING.name.lowercase())
                 GroupMode.REPEATING else GroupMode.ONCE,
+            itemGroupNames(name),
         )
     }
 
     private fun itemGroupPatterns(path: String): List<String> =
         provider.getStringList(path)?.filter { it.isNotBlank() } ?: listOf()
+
+    /** The names a group hands its items out under, keyed by pattern. */
+    private fun itemGroupNames(group: String): Map<String, String> =
+        provider.getSectionOrNull("items.groups.$group.names")
+            ?.mapNotNull { (pattern, name) -> name?.toString()?.takeIf { it.isNotBlank() }?.let { pattern to it } }
+            ?.toMap()
+            ?: mapOf()
 
     /**
      * Every configured arena, keyed by name.
@@ -302,6 +310,17 @@ object Configuration : Config(PaperConfigProvider()) {
                 val regex = wildcardRegex(pattern)
                 if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
                     problems += "The pattern '$pattern' in the item group '$name' matches no item and does nothing."
+            }
+
+            // A name for an item the group does not raise would never be used, since only the group
+            // handing an item out gets to name it.
+            val boosted = items.map { wildcardRegex(it) }
+            for (pattern in provider.getSectionOrNull("$path.names")?.keys ?: setOf()) {
+                val regex = wildcardRegex(pattern)
+                if (org.bukkit.Registry.ITEM.none { regex.matches(it.itemId()) })
+                    problems += "The name '$pattern' in the item group '$name' matches no item and does nothing."
+                else if (org.bukkit.Registry.ITEM.none { item -> regex.matches(item.itemId()) && boosted.any { it.matches(item.itemId()) } })
+                    problems += "The name '$pattern' in the item group '$name' names no item the group gives and does nothing."
             }
         }
 

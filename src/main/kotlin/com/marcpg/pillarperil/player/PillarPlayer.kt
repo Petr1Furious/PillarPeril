@@ -7,6 +7,7 @@ import com.marcpg.libpg.display.start
 import com.marcpg.pillarperil.game.Game
 import com.marcpg.pillarperil.util.Configuration
 import com.marcpg.pillarperil.util.ItemGroupState
+import com.marcpg.pillarperil.util.overrideName
 import com.marcpg.pillarperil.util.PoolItem
 import com.marcpg.pillarperil.util.randomByWeight
 import com.marcpg.pillarperil.util.playSoundSafe
@@ -85,9 +86,12 @@ class PillarPlayer(
     fun giveItems(available: Collection<PoolItem>, differentItems: Int = 1) {
         repeat(differentItems) {
             val chosen = available.randomByWeight { itemGroupState.weightOf(it) }
+            // Asked before recording, since being given the item is what ends a group.
+            val name = itemGroupState.nameFor(chosen)
             itemGroupState.record(chosen)
 
             var item = chosen.createItemStack()
+            if (name != null) item.overrideName(name)
             for (modifier in game.modifiers) {
                 item = modifier.onItemReceive(item)
             }

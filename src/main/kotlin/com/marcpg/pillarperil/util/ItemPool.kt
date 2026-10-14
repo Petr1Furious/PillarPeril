@@ -1,5 +1,6 @@
 package com.marcpg.pillarperil.util
 
+import com.marcpg.libpg.util.miniMessage
 import org.bukkit.Color
 import org.bukkit.FireworkEffect
 import org.bukkit.Registry
@@ -79,10 +80,23 @@ class ItemGroup(
     val mode: GroupMode,
     private val triggers: List<Regex>,
     private val items: List<Regex>,
+    /** The name to give an item instead of the one it comes with, keyed by pattern. */
+    private val names: List<Pair<Regex, String>>,
 ) {
     fun triggeredBy(id: String): Boolean = triggers.any { it.matches(id) }
 
     fun boosts(id: String): Boolean = items.any { it.matches(id) }
+
+    /**
+     * The name this group gives an item, or `null` when it leaves the item named as it is.
+     *
+     * The longest matching pattern wins, as with the configured weights, so the order of the lines
+     * does not decide anything.
+     */
+    fun nameFor(id: String): String? = names
+        .filter { it.first.matches(id) }
+        .maxByOrNull { it.first.pattern.length }
+        ?.second
 
     override fun toString(): String = name
 }
@@ -112,15 +126,27 @@ class ItemGroupState(private val groups: List<ItemGroup>) {
      * A group never makes an item rarer than it already is, so an item weighted up in the
      * configuration keeps that weight even when it belongs to a group with a smaller one.
      */
-    fun weightOf(item: PoolItem): Int {
+    fun weightOf(item: PoolItem): Int =
+        maxOf(item.weight, activeFor(item.type.itemId()).maxOfOrNull { it.weight } ?: 0)
+
+    /**
+     * The name an active group wants this item handed out under, or `null` for its own name.
+     *
+     * Only a group which is raising the item right now gets to rename it, so a rocket drawn before
+     * the player owns a crossbow is still a plain rocket. Has to be asked before [record], which is
+     * what ends a [GroupMode.ONCE] group.
+     */
+    fun nameFor(item: PoolItem): String? {
         val id = item.type.itemId()
 
-        val boost = triggered
-            .filter { it.boosts(id) && (it.mode == GroupMode.REPEATING || id !in received) }
-            .maxOfOrNull { it.weight }
-
-        return maxOf(item.weight, boost ?: 0)
+        return activeFor(id)
+            .sortedByDescending { it.weight }
+            .firstNotNullOfOrNull { it.nameFor(id) }
     }
+
+    /** The groups currently raising this item for the player. */
+    private fun activeFor(id: String): List<ItemGroup> = triggered
+        .filter { it.boosts(id) && (it.mode == GroupMode.REPEATING || id !in received) }
 }
 
 /**
@@ -219,9 +245,10 @@ val DEFAULT_ITEM_GROUPS = listOf(
     itemGroup("archery", 150, listOf("arrow", "spectral_arrow", "tipped_arrow"),
         triggers = listOf("bow", "crossbow"), mode = GroupMode.REPEATING),
 
-    // Rockets are ammunition too, but only for a crossbow.
+    // Rockets are ammunition too, but only for a crossbow, which the name says out loud.
     itemGroup("rockets", 150, listOf("firework_rocket"),
-        triggers = listOf("crossbow"), mode = GroupMode.REPEATING),
+        triggers = listOf("crossbow"), mode = GroupMode.REPEATING,
+        names = mapOf("firework_rocket" to "explosive_firework_rocket")),
 )
 
 /** Builds a group from configured patterns, defaulting to a symmetric set of items. */
@@ -231,7 +258,15 @@ fun itemGroup(
     items: List<String>,
     triggers: List<String> = items,
     mode: GroupMode = GroupMode.ONCE,
-) = ItemGroup(name, weight, mode, triggers.map { wildcardRegex(it) }, items.map { wildcardRegex(it) })
+    names: Map<String, String> = mapOf(),
+) = ItemGroup(
+    name,
+    weight,
+    mode,
+    triggers.map { wildcardRegex(it) },
+    items.map { wildcardRegex(it) },
+    names.map { (pattern, name) -> wildcardRegex(pattern) to name },
+)
 
 /** The item ids of every form a potion comes in, all of which need a potion type to be worth anything. */
 private val POTION_FORMS = setOf("potion", "splash_potion", "lingering_potion", "tipped_arrow")
@@ -316,6 +351,15 @@ private fun poolItem(type: ItemType, weight: Int): PoolItem = when {
 
     else -> PoolItem(type, weight)
 }
+
+/**
+ * Hands an item out under a different name.
+ *
+ * This sets the item name rather than a custom name, so it reads as what the item simply is instead
+ * of something a player renamed on an anvil. The configured name goes through MiniMessage, so it can
+ * be coloured.
+ */
+fun ItemStack.overrideName(name: String) = editMeta { meta -> meta.itemName(miniMessage(name)) }
 
 /** Gives a potion, splash potion, lingering potion or tipped arrow an effect to carry. */
 private fun ItemStack.rollPotion() =

@@ -258,6 +258,12 @@ items:
   #     ordinary item has. A group never makes an item rarer than it already is.
   #     Default: 250
   #
+  #   names:
+  #     A name to hand an item out under instead of the one it comes with, keyed by the same
+  #     patterns, so a player can tell an item a group gave them from an ordinary one. Only the
+  #     group raising an item right now gets to name it, and the names go through MiniMessage, so
+  #     something like '<red>Explosive Rocket' works too.
+  #
   #   mode:
   #     | -> once       : an item stops being likely once the player has been given it, so a pair
   #     |                 completes itself and is then done with.
@@ -322,7 +328,7 @@ items:
         - spectral_arrow
         - tipped_arrow
 
-    # Rockets are ammunition too, but only for a crossbow.
+    # Rockets are ammunition too, but only for a crossbow, which the name says out loud.
     rockets:
       mode: repeating
       weight: 150
@@ -330,6 +336,8 @@ items:
         - crossbow
       items:
         - firework_rocket
+      names:
+        firework_rocket: explosive_firework_rocket
 
 
 # Game Modes #
