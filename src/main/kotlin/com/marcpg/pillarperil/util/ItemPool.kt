@@ -1,9 +1,12 @@
 package com.marcpg.pillarperil.util
 
+import org.bukkit.Color
+import org.bukkit.FireworkEffect
 import org.bukkit.Registry
 import org.bukkit.World
 import org.bukkit.inventory.ItemStack
 import org.bukkit.inventory.ItemType
+import org.bukkit.inventory.meta.FireworkMeta
 import org.bukkit.inventory.meta.PotionMeta
 import org.bukkit.potion.PotionType
 import kotlin.random.Random
@@ -233,6 +236,9 @@ fun itemGroup(
 /** The item ids of every form a potion comes in, all of which need a potion type to be worth anything. */
 private val POTION_FORMS = setOf("potion", "splash_potion", "lingering_potion", "tipped_arrow")
 
+/** The item id of the firework rocket, which is a dud without an explosion in it. */
+private const val FIREWORK_ROCKET = "firework_rocket"
+
 /**
  * Every potion type that actually does something.
  *
@@ -301,13 +307,39 @@ private fun weightOf(type: ItemType, weights: List<Pair<Regex, Int>>): Int {
 }
 
 /** Wraps an item type into a pool entry, giving the ones that need extra data a creator which rolls it. */
-private fun poolItem(type: ItemType, weight: Int): PoolItem {
-    if (type.itemId() !in POTION_FORMS || effectivePotionTypes.isEmpty())
-        return PoolItem(type, weight)
+private fun poolItem(type: ItemType, weight: Int): PoolItem = when {
+    type.itemId() in POTION_FORMS && effectivePotionTypes.isNotEmpty() ->
+        PoolItem(type, weight) { it.createItemStack().apply { rollPotion() } }
 
-    return PoolItem(type, weight) {
-        it.createItemStack().apply {
-            editMeta(PotionMeta::class.java) { meta -> meta.basePotionType = effectivePotionTypes.random() }
-        }
-    }
+    type.itemId() == FIREWORK_ROCKET ->
+        PoolItem(type, weight) { it.createItemStack().apply { rollFirework() } }
+
+    else -> PoolItem(type, weight)
 }
+
+/** Gives a potion, splash potion, lingering potion or tipped arrow an effect to carry. */
+private fun ItemStack.rollPotion() =
+    editMeta(PotionMeta::class.java) { meta -> meta.basePotionType = effectivePotionTypes.random() }
+
+/**
+ * Gives a firework rocket something to go off with.
+ *
+ * A rocket straight out of the registry has no explosions at all, and vanilla only damages anything
+ * with a rocket that has at least one — so as crossbow ammunition the plain item is a dud that
+ * bursts silently. One explosion is enough to make it a weapon, and it costs a glider some health
+ * when they boost with it, which is a fair price for the escape.
+ */
+private fun ItemStack.rollFirework() = editMeta(FireworkMeta::class.java) { meta ->
+    meta.power = Random.nextInt(1, 4)
+    meta.addEffect(
+        FireworkEffect.builder()
+            .with(FireworkEffect.Type.values().random())
+            .withColor(randomColor(), randomColor())
+            .withFade(randomColor())
+            .apply { if (Random.nextBoolean()) flicker(true) }
+            .apply { if (Random.nextBoolean()) trail(true) }
+            .build()
+    )
+}
+
+private fun randomColor(): Color = Color.fromRGB(Random.nextInt(0x1000000))

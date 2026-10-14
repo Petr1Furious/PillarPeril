@@ -180,6 +180,8 @@ sound-effects:
 # Potions, splash potions, lingering potions and tipped arrows are given with a random effect rolled
 # for each one, as the plain item carries no effect at all. The effect-less potion types (water,
 # mundane, thick and awkward) are never used.
+# Firework rockets get a rolled explosion for the same reason: a rocket without one is a dud
+# that does no damage at all when shot from a crossbow.
 items:
 
   # A list of all items which will never be given to players, independent of the game mode.
