@@ -233,12 +233,24 @@ items:
   # weight next to a '*potion: 25'. The order of the lines does not matter.
   # Potions are weighted up by default because there are only four potion items against hundreds of
   # blocks: at an even weight, a player saw one roughly every sixth game.
+  # The items below them are the ones the groups further down are built around, weighted up for the
+  # same reason: a group which never gets set off may as well not exist, and at a weight of 1 a happy
+  # ghast turned up in about one game in twenty. Only the item which opens a group is listed, since
+  # the group takes care of the other half - the harness, the rail, the arrows - once that one lands.
   # Remove the section entirely to go back to these defaults; leave it empty to weight nothing.
   weights:
     potion: 25
     splash_potion: 25
     lingering_potion: 25
     tipped_arrow: 25
+    happy_ghast_spawn_egg: 25
+    elytra: 25
+    bow: 15
+    crossbow: 15
+    tnt: 15
+    minecart: 10
+    saddle: 10
+    respawn_anchor: 10
 
   # Variants of an item with data on them, each under a name of its own.
   # A definition is written exactly the way '/give' takes it, so everything the server version
@@ -315,7 +327,7 @@ items:
       weight: 300
       items:
         - saddle
-        - pig_spawn_egg
+        - horse_spawn_egg
 
     # Outside the nether a respawn anchor is a bomb, but only a charged one.
     respawn-anchor:

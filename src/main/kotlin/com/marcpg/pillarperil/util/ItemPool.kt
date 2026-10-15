@@ -170,12 +170,25 @@ val DEFAULT_BLACKLIST_EXCEPTIONS = listOf("white_harness")
  * Potions are weighted up because there are only four potion items against the registry's hundreds
  * of blocks, so at an even weight a player saw one about every sixth game — far too rare for
  * something that actually changes a fight.
+ *
+ * The rest are the items the groups in [DEFAULT_ITEM_GROUPS] are built around, weighted up for the
+ * same reason: a group that never gets set off may as well not exist, and at a weight of 1 a happy
+ * ghast turned up in about one game in twenty. Only the item which opens a group is listed, since
+ * the group itself takes care of the other half once that one lands.
  */
 val DEFAULT_ITEM_WEIGHTS = mapOf(
     "potion" to 25,
     "splash_potion" to 25,
     "lingering_potion" to 25,
     "tipped_arrow" to 25,
+    "happy_ghast_spawn_egg" to 25,
+    "elytra" to 25,
+    "bow" to 15,
+    "crossbow" to 15,
+    "tnt" to 15,
+    "minecart" to 10,
+    "saddle" to 10,
+    "respawn_anchor" to 10,
 )
 
 /** The weight an item group gives its items when the configuration does not say. */
@@ -205,7 +218,7 @@ val DEFAULT_ITEM_GROUPS = listOf(
     itemGroup("minecart", 300, listOf("minecart", "rail")),
 
     // A saddle is only a saddle once there is something to put it on.
-    itemGroup("saddle", 300, listOf("saddle", "pig_spawn_egg")),
+    itemGroup("saddle", 300, listOf("saddle", "horse_spawn_egg")),
 
     // Outside the nether a respawn anchor is a bomb, but only a charged one.
     itemGroup("respawn-anchor", 300, listOf("respawn_anchor", "glowstone")),
