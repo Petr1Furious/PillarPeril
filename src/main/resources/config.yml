@@ -243,10 +243,9 @@ items:
     splash_potion: 25
     lingering_potion: 25
     tipped_arrow: 25
-    happy_ghast_spawn_egg: 25
-    elytra: 25
-    bow: 15
-    crossbow: 15
+    happy_ghast_spawn_egg: 10
+    bow: 10
+    crossbow: 10
     tnt: 15
     minecart: 10
     saddle: 10
