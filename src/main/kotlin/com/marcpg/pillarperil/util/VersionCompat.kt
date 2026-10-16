@@ -47,7 +47,7 @@ private fun String.normalizedRuleName() = filter { it.isLetterOrDigit() }.lowerc
 fun resolveGameRule(name: String): GameRule<*>? = resolvedGameRules.getOrPut(name) {
     val normalized = name.normalizedRuleName()
 
-    runCatching { GameRule.getByName(name) }.getOrNull()
+    runCatching { GameRule.getByName<Any>(name) }.getOrNull()
         ?: GameRule.values().firstOrNull { it.name.normalizedRuleName() == normalized }
         ?: gameRuleConstants[normalized]
 }

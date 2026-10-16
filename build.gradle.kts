@@ -25,7 +25,7 @@ versionCatalogUpdate {
 }
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(25)
 }
 
 repositories {
@@ -58,15 +58,12 @@ dependencies {
 }
 
 tasks {
-    reobfJar {
-        dependsOn(jar)
-    }
     build {
-        dependsOn(shadowJar, reobfJar)
+        dependsOn(shadowJar)
     }
     runServer {
         dependsOn(shadowJar)
-        minecraftVersion("26.1.1")
+        minecraftVersion("26.3")
     }
     shadowJar {
         archiveClassifier.set("")
